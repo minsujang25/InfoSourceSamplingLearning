@@ -38,10 +38,17 @@ conda activate InfoSourceSamplingLearning
 
 You can run the simulation using command like the following:
 ```bash
-python scripts/run_simulation.py
+python scripts/run_simulation.py # there is no such file yet 
 ```
 Parameters such as the number of agents, steps, or network topology can be configured inside the script you customize.
 
+### 🔁 Example: Batch Running the Simulation
+
+To run multiple simulations (e.g., varying parameters or simulating adversarial scenarios), use the batch execution script:
+
+```bash
+python scripts/batch_run_jamming.py
+```
 
 ## 📊 Example Use Cases
 -	Modeling belief updating under biased information processing
