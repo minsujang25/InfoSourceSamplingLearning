@@ -17,13 +17,17 @@ This model is particularly useful for examining:
 
 ## 🚀 Getting Started
 
-### Installation
+### 🧪 Environment Setup (via Conda)
 
-Make sure you have Python 3.9+ installed.
+To ensure compatibility—especially with `mesa==2.4`, which is required for this simulation—please create the environment using the provided `.yml` file.
 
 ```bash
+# Step 1: Clone the repository
 git clone https://github.com/your-username/InfoSourceSamplingLearning.git
 cd InfoSourceSamplingLearning
-python -m venv venv
-source venv/bin/activate     # On Windows use `venv\Scripts\activate`
-pip install -r requirements.txt
+
+# Step 2: Create the environment from the .yml file
+conda env create -f InfoSourceSamplingLearning.yml
+
+# Step 3: Activate the environment
+conda activate InfoSourceSamplingLearning
