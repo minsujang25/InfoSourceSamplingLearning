@@ -23,7 +23,7 @@ To ensure compatibility—especially with `mesa==2.4`, which is required for thi
 
 ```bash
 # Step 1: Clone the repository
-git clone https://github.com/your-username/InfoSourceSamplingLearning.git
+git clone https://github.com/minsujang25/InfoSourceSamplingLearning.git
 cd InfoSourceSamplingLearning
 
 # Step 2: Create the environment from the .yml file
