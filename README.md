@@ -31,3 +31,19 @@ conda env create -f InfoSourceSamplingLearning.yml
 
 # Step 3: Activate the environment
 conda activate InfoSourceSamplingLearning
+```
+ℹ️ Note: This environment uses Python 3.11 and pins mesa==2.4, which allows manual parameter inputs via dictionaries—a feature deprecated in later versions.
+
+## 🏃‍♂️ Running the Simulation
+
+You can run the simulation using command like the following:
+```bash
+python scripts/run_simulation.py
+```
+Parameters such as the number of agents, steps, or network topology can be configured inside the script you customize.
+
+
+## 📊 Example Use Cases
+-	Modeling belief updating under biased information processing
+-	Simulating disinformation campaigns
+-	Studying trust and source credibility in dynamic information ecosystems
