@@ -1,0 +1,22 @@
+name: InfoSourceSamplingLearning
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - matplotlib
+  - networkx
+  - ipython
+  - jupyterlab
+  - pandas
+  - scipy
+  - scikit-learn
+  - openpyxl
+  - pip  
+  
+
+  - pip:
+      - mesa==2.4 # the program is built under mesa 2.4. Newer versions does not allow manual parameter inputs defined in a dictionary. 
+      - dill
+      - seaborn
+      - plotly==5.24.1
