@@ -11,8 +11,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gaussian_kde
 import copy
-from InfoSourceSamplingLearning import Citizen, DisruptiveJammer, InfoProvider, InfoSampleModel
-from ISSL_MultiProcessor import run_mp
+from pathlib import Path
+from model.InfoSourceSamplingLearning import Citizen, DisruptiveJammer, InfoProvider, InfoSampleModel
+from model.ISSL_MultiProcessor import run_mp
 import dill
 import warnings
 
@@ -120,5 +121,7 @@ if __name__ == "__main__":
     batch_results = run_mp(model = InfoSampleModel, model_attributes = param_dict_list, iterations = 100)
 
     # run models until it reaches to the equilibria
-    with open("batch_result/batch_result(n=500)_jamming.pkl", "ab") as file:
+    output_dir = Path("batch_result")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with (output_dir / "batch_result(n=500)_jamming.pkl").open("ab") as file:
         dill.dump(batch_results, file)

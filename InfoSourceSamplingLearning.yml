@@ -11,12 +11,11 @@ dependencies:
   - pandas
   - scipy
   - scikit-learn
+  - tqdm
   - openpyxl
-  - pip  
-  
-
+  - pip
   - pip:
-      - mesa==2.4 # the program is built under mesa 2.4. Newer versions does not allow manual parameter inputs defined in a dictionary. 
+      - mesa==2.4  # Version used by this model.
       - dill
       - seaborn
       - plotly==5.24.1
