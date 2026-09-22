@@ -113,10 +113,9 @@ def enforce_deterministic_neighbor_order(module):
     """
 
     def deterministic_get_neighbor_list(self):
-        return sorted(
-            self.model.grid.get_neighbors(self.pos, include_center=False),
-            key=lambda agent: agent.pos,
-        )
+        neighbors = self.model.grid.get_neighbors(self.pos, include_center=False)
+        by_position = {agent.pos: agent for agent in neighbors}
+        return [by_position[pos] for pos in sorted(by_position)]
 
     module.Citizen.get_neighbor_list = deterministic_get_neighbor_list
 
