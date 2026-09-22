@@ -2,7 +2,7 @@ name: InfoSourceSamplingLearning
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.12
   - numpy
   - matplotlib
   - networkx
@@ -15,7 +15,7 @@ dependencies:
   - openpyxl
   - pip
   - pip:
-      - mesa==2.4  # Version used by this model.
+      - mesa==3.5.1  # Latest stable Mesa release as of 2026-09; Mesa 4.x is still pre-release.
       - dill
       - seaborn
       - plotly==5.24.1

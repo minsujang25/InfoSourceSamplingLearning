@@ -69,7 +69,7 @@ def worker(iter_args):
     model = model_i(model_attribute = model_attribute)
     model.run_model(print_time=False)
 
-    half_steps = int(model.schedule.steps/2)
+    half_steps = int(model.steps/2)
 
     outcome['agent_mu_theta_list_last_step'] = model.agent_mu_theta_list[-1]
     outcome['agent_mu_theta_list_half_step'] = model.agent_mu_theta_list[half_steps]
@@ -77,7 +77,7 @@ def worker(iter_args):
     outcome['epsilon'] = model.epsilon
     outcome['iteration'] = iteration
     outcome['initial_theta_type'] = model.initial_theta_type
-    outcome['steps_run'] = model.schedule.steps
+    outcome['steps_run'] = model.steps
     outcome['surveil_ability'] = model.surveillance_ability
     outcome['num_max_citizen_neighbor'] = model.num_max_citizen_neighbor
     outcome['network'] = model.network
