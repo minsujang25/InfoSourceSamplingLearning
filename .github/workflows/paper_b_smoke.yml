@@ -52,3 +52,11 @@ jobs:
 
       - name: Run theory reconstruction checks
         run: python -m paper_b.experiments.check_reconstruction
+
+      - name: Smoke-test local diagnostic runner
+        run: |
+          python -m paper_b.experiments.run_local_diagnostic \
+            --seeds 1 \
+            --n-citizens 20 \
+            --max-steps 8 \
+            --output-dir /tmp/paper_b_diagnostic
