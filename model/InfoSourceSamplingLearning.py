@@ -589,9 +589,15 @@ class Citizen(InfoAgents):
             list: Neighboring agents.
         """
 
-        #neighbor_list = [neighbor for neighbor in self.model.grid.get_neighbors(self.pos, include_center=False)]
-        #return neighbor_list 
-        return set(list(self.model.grid.get_neighbors(self.pos, include_center=False)))
+        # Keep neighbor ordering deterministic. The legacy implementation
+        # converted this collection to a set, making matched-seed runs depend
+        # on Python object-hash / memory order across processes and Mesa
+        # versions. Sorting by the stable network position makes the RNG stream
+        # reproducible without changing which neighbors are available.
+        return sorted(
+            self.model.grid.get_neighbors(self.pos, include_center=False),
+            key=lambda agent: agent.pos,
+        )
 
     def learn_theta_or_delta(self):
         """
