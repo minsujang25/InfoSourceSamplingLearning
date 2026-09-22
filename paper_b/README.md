@@ -44,18 +44,15 @@ No arbitrary clipping is used.
 Theory-aligned runs should set `network_environment` explicitly:
 
 - `elite_only`: direct Expert + Jammer access, no citizen peers;
-- `random_peer`: random citizen peers plus localized elite access;
-- `homophilous_peer`: belief-group-homophilous citizen peers plus localized elite access;
-- `extended`: direct Expert + Jammer access plus random citizen peers.
+- `random_2`: exactly two local sources sampled from the full citizen+elite pool; elite access is localized by the sparse graph itself;
+- `group_id`: exactly two local sources with a 0.9 within-group / 0.1 cross-group preference; elite nodes are embedded in the same group-based pool;
+- `extended`: direct Expert + Jammer access plus exactly two random citizen peers.
 
 Legacy `mode` labels remain as compatibility aliases but should not be used to define the final Paper B design.
 
-Two design parameters are deliberately explicit rather than hidden:
+The baseline topology is now frozen: Random 2 local degree = 2, Group ID local degree = 2 with 0.9/0.1 within/cross-group mixing, and Extended peer degree = 2. Degree/bridging variations are robustness treatments, not part of the primary environment definitions.
 
-- `peer_degree`;
-- `elite_access_probability` for the sparse random/homophilous environments.
-
-Their final production values should be locked when the four accepted-abstract environments are mapped to the reconstructed model.
+See `paper_b/NETWORK_ENVIRONMENT_AUDIT.md` for the evidence and the legacy-code mismatch discovered during the audit.
 
 ## Main metrics
 
@@ -98,6 +95,6 @@ The reconstruction checks verify:
 
 1. Make the reconstruction checks green in CI.
 2. Audit remaining model-equation choices against the frozen theory and baseline-paper equations.
-3. Lock the exact four-environment parameterization.
-4. Run small paired J=1/J=0 and adaptive/frozen diagnostics.
+3. Run small paired J=1/J=0 and adaptive/frozen diagnostics under the frozen four-environment map.
+4. Quantify how corrected topology and learning rules change archived qualitative results.
 5. Only then launch the full Paper B simulation grid.
