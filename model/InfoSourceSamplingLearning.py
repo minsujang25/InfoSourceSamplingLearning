@@ -213,14 +213,23 @@ class InfoSampleModel(Model):
                 network_environment or self._legacy_environment_alias(self.mode),
             )
         ).lower()
-        self.peer_degree = int(
-            take(
-                "peer_degree",
-                peer_degree
-                if peer_degree is not None
-                else max(0, self.num_max_citizen_neighbor),
-            )
-        )
+        configured_peer_degree = take("peer_degree", peer_degree)
+        if configured_peer_degree is None:
+            if self.network_environment in {
+                "random_peer",
+                "homophilous_peer",
+                "extended",
+            }:
+                configured_peer_degree = (
+                    self.num_max_citizen_neighbor
+                    if self.num_max_citizen_neighbor > 0
+                    else 2
+                )
+            else:
+                configured_peer_degree = max(0, self.num_max_citizen_neighbor)
+        self.peer_degree = int(configured_peer_degree)
+        if self.peer_degree < 0:
+            raise ValueError("peer_degree must be nonnegative.")
         self.same_group_probability = float(
             take("same_group_probability", same_group_probability)
         )
@@ -292,6 +301,8 @@ class InfoSampleModel(Model):
             graph = supplied_network.copy()
             graph.add_nodes_from(range(self.num_nodes))
             return graph
+        if self.network_type == "social_network_model":
+            return make_snm_digraph(self.num_nodes)
         return make_fully_connected_digraph(self.num_nodes)
 
     def _create_agents(self, cfg: dict) -> None:
@@ -427,19 +438,19 @@ class InfoSampleModel(Model):
             elif env == "random_peer":
                 sources = (
                     self._localized_elites()
-                    + self._random_peer_sources(citizen, self.peer_degree or 2)
+                    + self._random_peer_sources(citizen, self.peer_degree)
                 )
 
             elif env == "homophilous_peer":
                 sources = (
                     self._localized_elites()
-                    + self._homophilous_peer_sources(citizen, self.peer_degree or 2)
+                    + self._homophilous_peer_sources(citizen, self.peer_degree)
                 )
 
             elif env == "extended":
                 sources = (
                     list(self.elite_sources)
-                    + self._random_peer_sources(citizen, self.peer_degree or 2)
+                    + self._random_peer_sources(citizen, self.peer_degree)
                 )
 
             elif env == "legacy_extended_random":
