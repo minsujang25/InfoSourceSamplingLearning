@@ -1,887 +1,1174 @@
-"""Create a model that allows beliefs to propagate
-over a user-defined directed graph. Nodes can be
-different types of agents.
-Author: MJ 
-v 0.0.0.1
+"""Theory-aligned reconstruction of the Info Source Sampling Learning model.
 
-Note: This implementation targets Mesa 3.5.1 
+This module reconstructs the legacy Mesa model around the Social Networks
+Paper B theory freeze (v1.0).  The reconstruction intentionally separates:
+
+    structural opportunity A
+        -> credibility ranking R_t
+        -> acquisition policy Pi_t
+        -> effective reliance Lambda_t
+        -> realized flow X_t
+        -> belief outcomes.
+
+Scientific changes relative to the legacy implementation
+---------------------------------------------------------
+1. Citizen-to-citizen communication is synchronous.  Period-t messages are
+   generated from sender states snapshotted at the beginning of period t.
+   Posterior states become outgoing-message parameters only at t+1.
+2. Citizen messages are sincere draws from the sender's current posterior:
+       M_{j->i,t} ~ Normal(mu_{j,t}, sigma_{j,t}^2).
+3. Multi-source theta acquisition uses recursive rank-based exploration, which
+   exactly nests the two-source (1-epsilon, epsilon) rule.
+4. Adaptive and first-audit-frozen reliance use the same model class.
+5. Theta uncertainty stores a standard deviation consistently.  Gaussian
+   updates return sqrt(posterior variance); no arbitrary clipping is used.
+6. Delta/source-displacement uncertainty is updated dimensionally as a
+   standard deviation.
+7. Periodic Jammer re-surveillance observes current pre-update citizen beliefs,
+   not initial beliefs.
+8. Reliance probabilities and realized request shares are logged separately.
+
+The old public API is retained where practical so archived scripts can still be
+used for auditing.  Theory-aligned Paper B experiments should pass the explicit
+network_environment and reliance_mode configuration fields.
 """
 
+from __future__ import annotations
+
 import math
-import numpy as np
+import warnings
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Iterable
+
 import networkx as nx
-from scipy.spatial import distance
-from scipy.optimize import minimize
-from copy import deepcopy
+import numpy as np
 from sklearn.cluster import KMeans
 
 from mesa import Agent, Model
 from mesa.space import NetworkGrid
 
-import sys
-import warnings
 
-# Increase recursion limit and suppress warnings to avoid unnecessary console output.
-sys.setrecursionlimit(10**6)
+PERIODS = 10
+NUM_NODES = 100
+TYPES = ["citizen", "infoprovider"]
+AGENT_TYPE_LIST = ["Citizen", "InfoProvider"]
+CHOICE_OPTION = [0, 1]  # 0 = theta/state learning, 1 = delta/credibility audit
+
+MIN_SD = 1e-8
+MIN_VAR = MIN_SD**2
+DEFAULT_SINGLE_MESSAGE_VAR = 1.0
+
 warnings.filterwarnings("ignore")
 
-# CONSTANTS
-PERIODS = 10              # Default number of simulation periods
-NUM_NODES = 100           # Default number of nodes in the network
-TYPES = ["citizen", "infoprovider"]  # Agent types
-AGENT_TYPE_LIST = ['Citizen', 'InfoProvider']
-CHOICE_OPTION = [0, 1]    # Options for learning (0: learn theta, 1: learn delta)
-MIN_STD = 1e-5            # Minimum allowable standard deviation for message sampling
 
-# ----------------------
-# Helper Functions
-# ----------------------
-def make_fully_connected_digraph(num_nodes=NUM_NODES):
+def make_fully_connected_digraph(num_nodes: int = NUM_NODES) -> nx.DiGraph:
+    """Return a fully connected directed graph without self loops."""
+    graph = nx.DiGraph(name="fully_connected")
+    graph.add_nodes_from(range(num_nodes))
+    graph.add_edges_from(
+        (i, j)
+        for i in range(num_nodes)
+        for j in range(num_nodes)
+        if i != j
+    )
+    return graph
+
+
+def make_snm_digraph(num_nodes: int = NUM_NODES, num_ips: int = 2) -> nx.DiGraph:
+    """Return the legacy elite-to-citizen opportunity graph."""
+    graph = nx.DiGraph(name="social_network_model")
+    graph.add_nodes_from(range(num_nodes))
+    citizens = range(num_ips, num_nodes)
+    graph.add_edges_from((citizen, ip) for citizen in citizens for ip in range(num_ips))
+    return graph
+
+
+def random_state_assignment(min_val: float = -1.0, max_val: float = 1.0, rng=None) -> float:
+    rng = np.random.default_rng() if rng is None else rng
+    return float(rng.uniform(min_val, max_val))
+
+
+def recursive_rank_probabilities(num_sources: int, epsilon: float) -> np.ndarray:
+    """Return the theory-freeze recursive rank-based acquisition probabilities.
+
+    For d sources:
+      p_1 = 1-epsilon
+      p_r = (1-epsilon) epsilon^(r-1), r=2,...,d-1
+      p_d = epsilon^(d-1)
+
+    For d=2 this is exactly (1-epsilon, epsilon).
     """
-    Create a fully connected directed graph.
+    if num_sources < 1:
+        raise ValueError("At least one source is required.")
+    if not 0.0 <= epsilon <= 1.0:
+        raise ValueError("epsilon must lie in [0, 1].")
+    if num_sources == 1:
+        return np.asarray([1.0], dtype=float)
 
-    Parameters:
-        num_nodes (int): Number of nodes in the graph.
+    probs = [(1.0 - epsilon) * (epsilon**r) for r in range(num_sources - 1)]
+    probs.append(epsilon ** (num_sources - 1))
+    probs = np.asarray(probs, dtype=float)
+    # Protect only against floating-point accumulation, not substantive values.
+    probs = probs / probs.sum()
+    return probs
 
-    Returns:
-        nx.DiGraph: A fully connected directed graph.
+
+def _observation_mean_variance(
+    messages: Iterable[float],
+    *,
+    single_message_variance: float = DEFAULT_SINGLE_MESSAGE_VAR,
+) -> tuple[float, float]:
+    """Return sample mean and estimated variance of that sample mean.
+
+    With >=2 observations, use s^2/n.  With a single observation the empirical
+    variance is unidentified, so use an explicit fallback observation variance
+    rather than treating one message as perfectly precise.
     """
-    edges = [(i, j) for i in range(num_nodes)
-                   for j in range(num_nodes) if i != j]
-    DG = nx.DiGraph(name="fully_connected")
-    DG.add_edges_from(edges)
-    return DG
-    
-def make_snm_digraph(num_nodes=NUM_NODES, num_ips=2):
-    """
-    Create a directed graph for the social network model (SNM).
+    values = np.asarray(list(messages), dtype=float)
+    if values.size == 0:
+        raise ValueError("Cannot summarize an empty message batch.")
+    if not np.isfinite(values).all():
+        raise ValueError("Message batch contains non-finite values.")
 
-    Parameters:
-        num_nodes (int): Total number of nodes in the network.
-        num_ips (int): Number of information providers (IPs).
+    mean = float(values.mean())
+    if values.size == 1:
+        mean_var = float(single_message_variance)
+    else:
+        sample_var = float(values.var(ddof=1))
+        mean_var = sample_var / values.size
 
-    Returns:
-        nx.DiGraph: A directed graph for the social network model.
-    """
-    ips_list = list(range(num_ips))
-    citizen_list = list(range(num_ips, num_nodes + 1))
-    node_list = ips_list + citizen_list
-    edges = [(citizen, ip) for ip in ips_list for citizen in citizen_list]
-    DG = nx.DiGraph(name="social_network_model")
-    DG.add_nodes_from(node_list)
-    DG.add_edges_from(edges)
-    return DG
+    return mean, max(mean_var, MIN_VAR)
 
-def random_state_assignment(min_val=-1, max_val=1):
-    """
-    Assign a random state value uniformly between min_val and max_val.
 
-    Parameters:
-        min_val (float): Minimum value.
-        max_val (float): Maximum value.
-
-    Returns:
-        float: A random state value.
-    """
-    return np.random.uniform(min_val, max_val)
-
-# ----------------------
-# Model Class
-# ----------------------
 class InfoSampleModel(Model):
-    """
-    Model for simulating information sampling and learning in a network of agents.
+    """Mesa model for credibility learning, networked reliance, and jamming."""
 
-    Attributes:
-        state_of_the_world (float): The true state of the world that agents aim to learn.
-        num_nodes (int): Number of nodes in the network.
-        comparison_rule (str): Rule for comparing information sources.
-        epsilon (float): Learning / optimal-arm exploitation parameter.
-        credit (int): Resources available for information requests.
-        initial_theta_type (str): Initial type for theta values.
-        network_type (str): Type of network ('fully_connected', 'social_network_model', or 'manually_defined').
-        learn_method (str): Learning method ('naive', 'cautious', or 'selective').
-        counterpart_pick_mechanism (str): Mechanism for selecting information counterparts.
-        mode (str): Operational mode (e.g., 'baseline', 'random', 'group_id_matching', 'clustered').
-        surveillance_ability (int): Ability of disruptive jammer to surveil citizens.
-        num_max_citizen_neighbor (int): Maximum number of citizen neighbors to consider.
-    """
-    def __init__(self, num_nodes=NUM_NODES, network=make_fully_connected_digraph(NUM_NODES), 
-        mode = 'incidental_learning_allowed', comparison_rule='delta_comparison', 
-        epsilon=0.1, credit=20, network_type = 'fully_connected', 
-        network_structure=None, learn_method='naive', counterpart_pick_mechanism = 'equal', 
-        num_max_citizen_neighbor = 0, max_steps = 1000,
-        model_attribute=None,
-        state_of_the_world=None,
-        rng=None):
+    def __init__(
+        self,
+        num_nodes: int = NUM_NODES,
+        network: nx.DiGraph | None = None,
+        mode: str = "incidental_learning_allowed",
+        comparison_rule: str = "delta_comparison",
+        epsilon: float = 0.1,
+        credit: int = 20,
+        network_type: str = "fully_connected",
+        network_structure: nx.DiGraph | None = None,
+        learn_method: str = "cautious",
+        counterpart_pick_mechanism: str = "equal",
+        num_max_citizen_neighbor: int = 0,
+        max_steps: int = 1000,
+        model_attribute: dict | None = None,
+        state_of_the_world: float | None = None,
+        rng=None,
+        *,
+        network_environment: str | None = None,
+        reliance_mode: str = "adaptive",
+        peer_degree: int | None = None,
+        same_group_probability: float = 0.9,
+        elite_access_probability: float = 0.10,
+        jammer_active: bool = True,
+        surveillance_interval: int = 5,
+        convergence_tolerance: float = 1e-3,
+        single_message_variance: float = DEFAULT_SINGLE_MESSAGE_VAR,
+    ):
         super().__init__(rng=rng)
-        self.model_attribute = model_attribute
 
-        # Set model parameters based on provided attributes or default values.
-        if self.model_attribute is not None:
-            self.state_of_the_world = model_attribute['state_of_the_world']
-            self.num_nodes = model_attribute['num_nodes']
-            self.comparison_rule = model_attribute['comparison_rule']
-            self.epsilon = round(model_attribute['epsilon'], 2)
-            self.credit = model_attribute['credit']
-            self.initial_theta_type = model_attribute['initial_theta_type']
-            self.network_type = model_attribute['network_type']
-            self.learn_method = model_attribute['learn_method']  # 'naive', 'cautious', or 'selective'
-            self.counterpart_pick_mechanism = model_attribute['counterpart_pick_mechanism']
-            self.mode = model_attribute['mode']  # baseline, random, group_id, or clustered
-            self.surveillance_ability = model_attribute['surveil_ability']
-            self.num_max_citizen_neighbor = model_attribute['num_max_citizen_neighbor']
-            self.max_steps = model_attribute['max_steps']
-        else:
-            self.state_of_the_world = (
-                random_state_assignment()
+        cfg = {} if model_attribute is None else dict(model_attribute)
+        self.model_attribute = cfg or None
+
+        def take(name, default):
+            return cfg[name] if name in cfg else default
+
+        self.state_of_the_world = float(
+            take(
+                "state_of_the_world",
+                random_state_assignment(rng=self.rng)
                 if state_of_the_world is None
-                else state_of_the_world
+                else state_of_the_world,
             )
-            self.num_nodes = num_nodes
-            self.comparison_rule = comparison_rule
-            self.epsilon = epsilon
-            self.credit = credit
-            self.initial_theta_type = 'random'
-            self.network_type = network_type
-            self.learn_method = learn_method
-            self.mode = mode
-            self.surveillance_ability = 7
-            self.num_max_citizen_neighbor = num_max_citizen_neighbor
-            self.max_steps = max_steps
+        )
+        self.num_nodes = int(take("num_nodes", num_nodes))
+        self.comparison_rule = take("comparison_rule", comparison_rule)
+        self.epsilon = float(take("epsilon", epsilon))
+        self.credit = int(take("credit", credit))
+        self.initial_theta_type = take("initial_theta_type", "random")
+        self.network_type = take("network_type", network_type)
+        self.learn_method = take("learn_method", learn_method)
+        self.counterpart_pick_mechanism = take(
+            "counterpart_pick_mechanism", counterpart_pick_mechanism
+        )
+        self.mode = take("mode", mode)
+        self.surveillance_ability = int(take("surveil_ability", take("jammer_k", 1)))
+        self.num_max_citizen_neighbor = int(
+            take("num_max_citizen_neighbor", num_max_citizen_neighbor)
+        )
+        self.max_steps = int(take("max_steps", max_steps))
+        self.reliance_mode = str(take("reliance_mode", reliance_mode)).lower()
+        if self.reliance_mode not in {"adaptive", "frozen"}:
+            raise ValueError("reliance_mode must be 'adaptive' or 'frozen'.")
 
-        # Initialize network based on type
-        if self.network_type == 'fully_connected':
-            self.network = make_fully_connected_digraph(num_nodes=self.num_nodes)
-        elif self.network_type == 'social_network_model':
-            self.network = make_snm_digraph(num_nodes=self.num_nodes)
-        elif self.network_type == 'manually_defined':
-            self.network = model_attribute['network_structure']
- 
-        # Set up the network space. Mesa 3.x automatically tracks all agents
-        # in model.agents, so an explicit scheduler is no longer needed.
-        self.grid = NetworkGrid(self.network)
+        self.network_environment = str(
+            take(
+                "network_environment",
+                network_environment or self._legacy_environment_alias(self.mode),
+            )
+        ).lower()
+        self.peer_degree = int(
+            take(
+                "peer_degree",
+                peer_degree
+                if peer_degree is not None
+                else max(0, self.num_max_citizen_neighbor),
+            )
+        )
+        self.same_group_probability = float(
+            take("same_group_probability", same_group_probability)
+        )
+        self.elite_access_probability = float(
+            take("elite_access_probability", elite_access_probability)
+        )
+        self.jammer_active = bool(take("jammer_active", jammer_active))
+        self.surveillance_interval = max(
+            1, int(take("surveillance_interval", surveillance_interval))
+        )
+        self.convergence_tolerance = float(
+            take("convergence_tolerance", convergence_tolerance)
+        )
+        self.single_message_variance = float(
+            take("single_message_variance", single_message_variance)
+        )
+
         self.period = 0
+        self.p = 1.0
+        self.p_pair = [0.0, 1.0]
 
-        # Data tracking attributes.
-        self.agent_mu_theta_list = []
-        self.agent_num_request_list = []
-        self.avg_agent_mu_theta_diff = 10.0
-        self.avg_agent_mu_theta_diff_rate = 10.0
-        self.avg_agent_sd_theta = 10.0
-
-        # Create agents
-        if self.model_attribute is not None and self.model_attribute['seq_meaningful'] is True:
-            for i,node in enumerate(sorted(self.network.nodes())):
-                #### mu_delta & sd_delta should be in the form of [mu_delta_0, mu_delta_1] & [sd_delta_0, sd_delta_1] ###
-                its_alive=self.model_attribute['type_of_agent'][i](i,node,self, mu_delta=self.model_attribute['mu_delta'][i], sd_delta=self.model_attribute['sd_delta'][i], mu_theta=self.model_attribute['mu_theta'][i], sd_theta=self.model_attribute['sd_theta'][i])
-                    # Add the agent to the node, this adds .pos attr to agent
-                self.grid.place_agent(its_alive, node)
-            # NetworkGrid.place_agent() already records the agent on the node.
-            # Do not append it a second time; doing so duplicates neighbors.
-
-        elif self.model_attribute is not None and self.model_attribute['seq_meaningful'] is not True:
-            for i,node in enumerate(self.network.nodes()):
-                its_alive=self.model_attribute['type_of_agent'][i](i,node,self, mu_delta=self.model_attribute['mu_delta'][i], sd_delta=self.model_attribute['sd_delta'][i], mu_theta=self.model_attribute['mu_theta'][i], sd_theta=self.model_attribute['sd_theta'][i])
-                    # Add the agent to the node, this adds .pos attr to agent
-                self.grid.place_agent(its_alive, node)
-
-        else:
-            for i,node in enumerate(self.network.nodes()):
-                its_alive = self.types_and_proportions[temp_type_list[i]][1](i,node,self, mu_delta=np.random.uniform(-5,5), sd_delta=np.random.randint(1,10), mu_theta=np.random.uniform(-5,5), sd_theta=np.random.randint(1,10))
-                    # Add the agent to the node, this adds .pos attr to agent
-                self.grid.place_agent(its_alive, node)
-
+        self.agent_mu_theta_list: list[list[float]] = []
+        self.agent_num_request_list: list[list[list[int]]] = []
+        self.reliance_history: list[list[dict]] = []
+        self.avg_agent_mu_theta_diff = math.inf
+        self.avg_agent_mu_theta_diff_rate = math.inf
+        self.avg_agent_sd_theta = math.inf
         self.running = True
 
+        placement_graph = self._placement_graph(
+            supplied_network=network,
+            network_structure=take("network_structure", network_structure),
+        )
+        self.grid = NetworkGrid(placement_graph)
 
-    def get_agent_mu_theta(self):
-        """
-        Retrieve the current mu_theta beliefs from citizen agents.
+        self._create_agents(cfg)
+        self._build_structural_sources()
+        self._initialize_citizen_source_priors()
+        self.update_network()
 
-        Returns:
-            list: Latest mu_theta beliefs from agents.
-        """
-        if self.learn_method == 'naive':
-            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen"]
-        else:
-            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
-        return mu_theta_list
+    @staticmethod
+    def _legacy_environment_alias(mode: str) -> str:
+        """Map old mode labels without pretending they are the new 4-way design.
 
-    def get_agent_mu_theta_delta(self):
+        Legacy random/group modes always granted direct elite access, so they
+        map to explicit compatibility environments.  Paper B production runs
+        should use network_environment directly.
         """
-        Compute the mean absolute change in mu_theta beliefs for citizen agents.
+        mapping = {
+            "baseline": "elite_only",
+            "random": "legacy_extended_random",
+            "group_id_matching": "legacy_extended_homophilous",
+            "clustered": "legacy_extended_clustered",
+            "incidental_learning_allowed": "legacy_extended_random",
+        }
+        return mapping.get(mode, mode)
 
-        Returns:
-            float: Mean absolute difference between the last two mu_theta beliefs.
-        """
-        mu_theta_delta = [ abs(a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1]) for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
-        return np.mean(mu_theta_delta)
+    def _placement_graph(
+        self,
+        *,
+        supplied_network: nx.DiGraph | None,
+        network_structure: nx.DiGraph | None,
+    ) -> nx.DiGraph:
+        if self.network_type == "manually_defined" and network_structure is not None:
+            graph = network_structure.copy()
+            graph.add_nodes_from(range(self.num_nodes))
+            return graph
+        if supplied_network is not None:
+            graph = supplied_network.copy()
+            graph.add_nodes_from(range(self.num_nodes))
+            return graph
+        return make_fully_connected_digraph(self.num_nodes)
 
-    def get_agent_mu_theta_delta_rate(self):
-        """
-        Compute the mean relative change rate in mu_theta beliefs for citizen agents.
+    def _create_agents(self, cfg: dict) -> None:
+        types = cfg.get("type_of_agent")
+        mu_theta = cfg.get("mu_theta")
+        sd_theta = cfg.get("sd_theta")
+        mu_delta = cfg.get("mu_delta")
+        sd_delta = cfg.get("sd_delta")
 
-        Returns:
-            float: Mean relative change rate.
-        """
-        if self.learn_method == 'naive':
-            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.agents if a.type_of_agent == "citizen" and a.mu_theta_beliefs[-2] != 0.0]
+        if types is None:
+            types = [InfoProvider, DisruptiveJammer] + [Citizen] * (self.num_nodes - 2)
+        if len(types) != self.num_nodes:
+            raise ValueError("type_of_agent length must equal num_nodes.")
 
-        else:
-            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.mu_theta_beliefs[-2] != 0.0]
-            
-        return np.mean(mu_theta_delta_rate)
+        if mu_theta is None:
+            mu_theta = [
+                self.state_of_the_world,
+                self.state_of_the_world + 4.0,
+            ] + list(self.rng.uniform(-1.0, 1.0, self.num_nodes - 2))
+        if sd_theta is None:
+            sd_theta = [1.0, 1.0] + [5.0] * (self.num_nodes - 2)
+        if mu_delta is None:
+            mu_delta = [[0.0] for _ in range(self.num_nodes)]
+        if sd_delta is None:
+            sd_delta = [[5.0] for _ in range(self.num_nodes)]
 
-    def get_agent_sd_theta(self):
-        """
-        Retrieve the current sd_theta beliefs from citizen agents.
+        if not (len(mu_theta) == len(sd_theta) == self.num_nodes):
+            raise ValueError("mu_theta and sd_theta lengths must equal num_nodes.")
 
-        Returns:
-            list: Latest sd_theta beliefs.
-        """
-        sd_theta_list = [a.sd_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen"]
-        return sd_theta_list
+        seq_meaningful = bool(cfg.get("seq_meaningful", True))
+        positions = sorted(range(self.num_nodes)) if seq_meaningful else list(range(self.num_nodes))
 
-    def get_agent_avg_sd_theta(self):
-        """
-        Compute the average standard deviation (sd_theta) among citizen agents.
+        for pos in positions:
+            agent_cls = types[pos]
+            agent = agent_cls(
+                pos,
+                pos,
+                self,
+                mu_delta=mu_delta[pos] if pos < len(mu_delta) else [0.0],
+                sd_delta=sd_delta[pos] if pos < len(sd_delta) else [5.0],
+                mu_theta=float(mu_theta[pos]),
+                sd_theta=float(sd_theta[pos]),
+            )
+            self.grid.place_agent(agent, pos)
 
-        Returns:
-            float: Mean sd_theta value.
-        """
-        sd_theta_list = self.get_agent_sd_theta()
-        return np.mean(sd_theta_list)
+    def _agents_of_type(self, agent_type: str) -> list[Agent]:
+        return [
+            a for a in self.agents
+            if getattr(a, "type_of_agent", None) == agent_type
+        ]
 
-    def get_agent_num_request(self):
-        """
-        Retrieve the number of requests made by citizen agents.
+    @property
+    def citizens(self) -> list["Citizen"]:
+        return sorted(self._agents_of_type("citizen"), key=lambda a: a.pos)
 
-        Returns:
-            list: Request counts from agents.
-        """
-        if self.learn_method == 'naive':
-            num_request_list = [a.num_request for a in self.agents if a.type_of_agent == "citizen" and a.info_source[0].type_of_agent == 'infoprovider']
-        else:
-            num_request_list = [a.num_request for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.info_source[0].type_of_agent == 'infoprovider']
-        
-        return num_request_list
+    @property
+    def elite_sources(self) -> list["InfoAgents"]:
+        return sorted(
+            [
+                a for a in self.agents
+                if getattr(a, "type_of_agent", None)
+                in {"infoprovider", "disruptivejammer"}
+            ],
+            key=lambda a: a.pos,
+        )
 
-    def update_network(self):
-        """
-        Build a new directed graph representing the current counterpart relationships.
-        Each citizen agent creates a directed edge from itself to every agent in its info_source.
-        The function then stores the edge list (as returned by networkx) in the model attribute.
-        """
-        updated_net = nx.DiGraph()
-        # Add all nodes (i.e. all agents).
+    @property
+    def jammer(self) -> "DisruptiveJammer | None":
+        jammers = self._agents_of_type("disruptivejammer")
+        return jammers[0] if jammers else None
+
+    def _sample_without_replacement(self, pool: list, n: int) -> list:
+        n = min(max(int(n), 0), len(pool))
+        if n == 0:
+            return []
+        idx = self.rng.choice(len(pool), size=n, replace=False)
+        return [pool[int(i)] for i in np.atleast_1d(idx)]
+
+    def _random_peer_sources(self, citizen: "Citizen", degree: int) -> list["Citizen"]:
+        peers = [c for c in self.citizens if c is not citizen]
+        return self._sample_without_replacement(peers, degree)
+
+    def _homophilous_peer_sources(self, citizen: "Citizen", degree: int) -> list["Citizen"]:
+        peers = [c for c in self.citizens if c is not citizen]
+        same = [c for c in peers if c.group_id == citizen.group_id]
+        other = [c for c in peers if c.group_id != citizen.group_id]
+
+        selected: list[Citizen] = []
+        while len(selected) < min(degree, len(peers)):
+            want_same = bool(self.rng.random() < self.same_group_probability)
+            preferred = same if want_same else other
+            fallback = other if want_same else same
+            preferred = [c for c in preferred if c not in selected]
+            fallback = [c for c in fallback if c not in selected]
+            pool = preferred or fallback
+            if not pool:
+                break
+            selected.append(pool[int(self.rng.integers(0, len(pool)))])
+        return selected
+
+    def _clustered_peer_sources(self, citizen: "Citizen", degree: int) -> list["Citizen"]:
+        peers = [c for c in self.citizens if c is not citizen]
+        if not peers or degree <= 0:
+            return []
+        ordering = list(self.rng.permutation(len(peers)))
+        selected = []
+        for idx in ordering:
+            candidate = peers[int(idx)]
+            distance = abs(citizen.mu_theta - candidate.mu_theta)
+            power = 0.5 if candidate.group_id == citizen.group_id else 1.0
+            p_connect = math.exp(-distance * power)
+            if self.rng.random() < p_connect:
+                selected.append(candidate)
+                if len(selected) >= degree:
+                    break
+        return selected
+
+    def _localized_elites(self) -> list["InfoAgents"]:
+        selected = []
+        for source in self.elite_sources:
+            if self.rng.random() < self.elite_access_probability:
+                selected.append(source)
+        return selected
+
+    def _build_structural_sources(self) -> None:
+        """Construct fixed source sets for the theory-aligned environments."""
+        env = self.network_environment
+
+        for citizen in self.citizens:
+            if env == "elite_only":
+                sources = list(self.elite_sources)
+
+            elif env == "random_peer":
+                sources = (
+                    self._localized_elites()
+                    + self._random_peer_sources(citizen, self.peer_degree or 2)
+                )
+
+            elif env == "homophilous_peer":
+                sources = (
+                    self._localized_elites()
+                    + self._homophilous_peer_sources(citizen, self.peer_degree or 2)
+                )
+
+            elif env == "extended":
+                sources = (
+                    list(self.elite_sources)
+                    + self._random_peer_sources(citizen, self.peer_degree or 2)
+                )
+
+            elif env == "legacy_extended_random":
+                sources = (
+                    list(self.elite_sources)
+                    + self._random_peer_sources(citizen, self.peer_degree)
+                )
+
+            elif env == "legacy_extended_homophilous":
+                sources = (
+                    list(self.elite_sources)
+                    + self._homophilous_peer_sources(citizen, self.peer_degree)
+                )
+
+            elif env == "legacy_extended_clustered":
+                sources = (
+                    list(self.elite_sources)
+                    + self._clustered_peer_sources(citizen, self.peer_degree)
+                )
+
+            else:
+                raise ValueError(
+                    f"Unknown network_environment={env!r}. "
+                    "Use elite_only, random_peer, homophilous_peer, extended, "
+                    "or an explicit legacy_extended_* compatibility environment."
+                )
+
+            # Stable order is important for matched-seed reproducibility.
+            unique = {source.pos: source for source in sources if source is not citizen}
+            citizen.info_source = [unique[pos] for pos in sorted(unique)]
+            if not citizen.info_source:
+                raise ValueError(
+                    f"Citizen {citizen.pos} has no information sources under {env}."
+                )
+
+    def _initialize_citizen_source_priors(self) -> None:
+        for citizen in self.citizens:
+            citizen.initialize_source_priors(citizen.info_source)
+
+    def update_network(self) -> None:
+        """Store the fixed structural opportunity network A."""
+        graph = nx.DiGraph(name="structural_opportunity")
         for agent in self.agents:
-            updated_net.add_node(agent.pos)
-        # Add edges from citizen to each counterpart in its info_source.
+            graph.add_node(agent.pos, agent_type=agent.type_of_agent)
+        for citizen in self.citizens:
+            for source in citizen.info_source:
+                graph.add_edge(citizen.pos, source.pos)
+        self.network = graph
+
+    def get_agent_mu_theta(self) -> list[float]:
+        return [float(c.mu_theta_beliefs[-1]) for c in self.citizens]
+
+    def get_agent_sd_theta(self) -> list[float]:
+        return [float(c.sd_theta_beliefs[-1]) for c in self.citizens]
+
+    def get_agent_avg_sd_theta(self) -> float:
+        values = self.get_agent_sd_theta()
+        return float(np.mean(values)) if values else math.nan
+
+    def get_agent_num_request(self) -> list[list[int]]:
+        return [list(c.num_request) for c in self.citizens]
+
+    def _theta_update_change(self) -> float:
+        changes = []
+        for citizen in self.citizens:
+            if citizen.theta_or_delta != 0 or len(citizen.mu_theta_beliefs) < 2:
+                continue
+            old = float(citizen.mu_theta_beliefs[-2])
+            new = float(citizen.mu_theta_beliefs[-1])
+            denom = max(abs(old), 1e-8)
+            changes.append(abs(new - old) / denom)
+        return float(np.mean(changes)) if changes else math.inf
+
+    def _snapshot_message_states(self) -> None:
         for agent in self.agents:
-            if agent.type_of_agent == "citizen" and hasattr(agent, "info_source"):
-                for counterpart in agent.info_source:
-                    updated_net.add_edge(agent.pos, counterpart.pos)
-        # Save the network structure as a model attribute.
-        self.network = updated_net
+            agent.snapshot_message_state()
 
-    def step(self):
-        """
-        Execute one simulation step:
-          - Update time-dependent probabilities for exploration / exploitation.
-          - Activate all agents.
-          - Record summary statistics.
-        """
-        # Mesa 3.x increments model.steps before entering the user-defined
-        # step body, so the first call is step 1 rather than scheduler step 0.
-        if self.steps == 1:
-            for citizen in [a for a in self.agents if a.type_of_agent == "citizen"]:
-                citizen.info_source = citizen.pick_counterpart()
-            # Record the updated network structure based on current counterpart selections.
-            self.update_network()
+    def _prepare_adversary(self) -> None:
+        if self.jammer is not None:
+            self.jammer.prepare_for_period()
 
+    def _record_reliance(self) -> None:
+        records = []
+        for citizen in self.citizens:
+            for source in citizen.info_source:
+                records.append(
+                    {
+                        "period": int(self.period),
+                        "ego": int(citizen.pos),
+                        "source": int(source.pos),
+                        "source_type": source.type_of_agent,
+                        "source_group": getattr(source, "group_id", None),
+                        "ego_group": citizen.group_id,
+                        "structural_edge": 1,
+                        "expected_reliance": float(
+                            citizen.reliance_probabilities.get(source, 0.0)
+                        ),
+                        "realized_reliance": float(
+                            citizen.realized_reliance.get(source, 0.0)
+                        ),
+                    }
+                )
+        self.reliance_history.append(records)
 
-        self.p = 1/(self.period+1)
-        self.p_pair = [1-self.p, self.p]
-        # Equivalent to Mesa 2.x SimultaneousActivation: all agents execute
-        # step() first, then advance(). Agent.advance() is a no-op unless
-        # overridden by a subclass.
-        self.agents.do("step")
-        self.agents.do("advance")
+    def step(self) -> None:
+        """Execute one synchronous theory-aligned simulation period."""
+        self.p = 1.0 / (self.period + 1.0)
+        self.p_pair = [1.0 - self.p, self.p]
 
-        mu_theta_list=self.get_agent_mu_theta()
-        self.agent_mu_theta_list.append(mu_theta_list)
-        if self.steps > 2:
-            num_request_list=self.get_agent_num_request()
-            #self.avg_agent_mu_theta_diff = self.get_agent_mu_theta_delta()
-            self.avg_agent_mu_theta_diff_rate = self.get_agent_mu_theta_delta_rate()
-            #self.avg_agent_sd_theta = self.get_agent_avg_sd_theta()
-            #self.agent_num_request_list.append(num_request_list)
+        # Freeze all sender states for period t before any citizen updates.
+        self._snapshot_message_states()
+        self._prepare_adversary()
 
-        # Keep the model's substantive period counter separate from Mesa's
-        # reserved time/steps bookkeeping.
+        # Stage 0-1: choose learning target, then sample/read from t states.
+        for citizen in self.citizens:
+            citizen.stage_period()
+
+        # Stage 2: compute posteriors/rankings without exposing them as messages.
+        for citizen in self.citizens:
+            citizen.compute_pending_update()
+
+        # Stage 3: commit all t+1 citizen states together.
+        for citizen in self.citizens:
+            citizen.commit_pending_update()
+
+        self._record_reliance()
+
+        self.agent_mu_theta_list.append(self.get_agent_mu_theta())
+        self.agent_num_request_list.append(self.get_agent_num_request())
+        self.avg_agent_mu_theta_diff_rate = self._theta_update_change()
+        self.avg_agent_sd_theta = self.get_agent_avg_sd_theta()
+
         self.period += 1
-        
-    def run_model(self, print_time=True):
-        while self.running:
-            if print_time is True:
-                print("Running step :{}".format(self.period))
-            
-            self.step()
-            if (self.avg_agent_mu_theta_diff_rate<10**-3 or self.steps > self.max_steps) :
-                self.running=False
-# ----------------------
-# Agent Classes
-# ----------------------
-class InfoAgents(Agent):
-    """
-    Base class for agents in the model.
 
-    Attributes:
-        mu_theta (float): Belief about the state of the world (theta).
-        sd_theta (float): Standard deviation of theta belief.
-        mu_delta (list): Belief about delta (bais) belief.
-        sd_delta (list): Standard deviation of delta (bias) belief.
-        type_of_agent (str): Identifier for the agent type.
-        pos: Position in the grid.
-        epsilon (float): Learning parameter.
-        group_id (int): Group identifier based on mu_theta.
-    """
-    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent='genericagent'):
-        # Mesa 3.x assigns unique_id automatically when Agent is created.
-        # Preserve the pre-Mesa-3 identifier separately for provenance.
+    def run_model(self, print_time: bool = True) -> None:
+        while self.running:
+            if print_time:
+                print(f"Running step :{self.period}")
+            self.step()
+
+            reached_limit = self.steps >= self.max_steps
+            converged = (
+                self.steps >= 3
+                and math.isfinite(self.avg_agent_mu_theta_diff_rate)
+                and self.avg_agent_mu_theta_diff_rate < self.convergence_tolerance
+            )
+            if reached_limit or converged:
+                self.running = False
+
+
+class InfoAgents(Agent):
+    """Base information-source agent."""
+
+    def __init__(
+        self,
+        legacy_id,
+        pos,
+        model,
+        mu_delta,
+        sd_delta,
+        mu_theta,
+        sd_theta,
+        type_of_agent="genericagent",
+    ):
         super().__init__(model)
         self.legacy_id = legacy_id
-        self.mu_theta = mu_theta
-        self.sd_theta = sd_theta
-        self.mu_delta = mu_delta
-        self.sd_delta = sd_delta
-        self.type_of_agent = type_of_agent
-
         self.pos = pos
-        self.epsilon = self.model.epsilon
+        self.mu_theta = float(mu_theta)
+        self.sd_theta = max(float(sd_theta), MIN_SD)
+        self._initial_mu_delta_input = list(mu_delta) if isinstance(mu_delta, (list, tuple, np.ndarray)) else [float(mu_delta)]
+        self._initial_sd_delta_input = list(sd_delta) if isinstance(sd_delta, (list, tuple, np.ndarray)) else [float(sd_delta)]
+        self.type_of_agent = type_of_agent
+        self.epsilon = model.epsilon
+        self.group_id = -1 if self.mu_theta <= 0 else 1
 
-        if mu_theta <=0:
-            self.group_id = -1
-        else: self.group_id = 1
+        self._message_mu = self.mu_theta
+        self._message_sd = self.sd_theta
 
-    def mu_out(self, n_req, requester):
-        """
-        Generate outgoing messages based on the agent's mu_theta belief.
+    def snapshot_message_state(self) -> None:
+        self._message_mu = float(self.mu_theta)
+        self._message_sd = max(float(self.sd_theta), MIN_SD)
 
-        Parameters:
-            n_req (int): Number of messages to generate.
-            requester: The agent requesting the messages.
-
-        Returns:
-            list: Generated message values.
-        """
-        if n_req > 0:
-            return list(np.random.normal(self.mu_theta, self.sd_theta, n_req))
-        return []
-
-class DisruptiveJammer(InfoAgents):
-    """
-    Agent that disrupts useful information learning by jamming messages.
-
-    Attributes:
-        citizen_intel (dict): Information on citizen agents (e.g., clusters).
-        surveillance_ability (int): Ability to surveil citizens.
-        msg_param_at_t_per_cluster (dict): Message parameters per cluster at each time step.
-        expected_cluster_theta_beliefs (dict): Expected cluster theta beliefs.
-    """
-    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="disruptivejammer", surveillance_ability=5):
-        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
-        self.citizen_intel = {}
-        self.surveillance_ability = self.model.model_attribute['surveil_ability']
-        self.msg_param_at_t_per_cluster = {}
-        self.expected_cluster_theta_beliefs = {}
-
-    def surveil_citizen(self):
-        """
-        Cluster citizen agents using KMeans to monitor their theta beliefs and assign cluster memberships.
-        """
-        citizens = [a for a in self.model.agents if a.type_of_agent == 'citizen']
-        mu_beliefs = [a.mu_theta_beliefs[0] for a in citizens]
-        citizen_ids = [a.unique_id for a in citizens]
-        kmeans = KMeans(n_clusters=self.surveillance_ability)
-        data = np.array(mu_beliefs).reshape(-1, 1)
-        kmeans.fit(data)
-        labels = kmeans.predict(data)
-        centroids = kmeans.cluster_centers_
-
-        membership = {cid: label for cid, label in zip(citizen_ids, labels)}
-        clusters = {}
-        for label in np.unique(labels):
-            clusters[label] = [a for a in citizens if membership[a.unique_id] == label]
-
-        self.citizen_intel = {'centroids': centroids, 'membership': membership}
-        self.citizen_per_cl = clusters
-
-    def calculate_v(self, prior_std, alpha):
-        """
-        Calculate the v value used in updating expected cluster beliefs.
-
-        Parameters:
-            prior_std (float): Prior standard deviation.
-            alpha (float): Learning parameter.
-
-        Returns:
-            float: Calculated v value.
-        """
-        return prior_std**2 / (prior_std**2 + 2 * alpha - 1)
-
-    def expected_cluster_mean(self, prior_mu, prior_std, alpha, message_mean):
-        """
-        Compute the expected mean of cluster theta beliefs for the next time step.
-
-        Parameters:
-            prior_mu (float): Prior cluster mean.
-            prior_std (float): Prior cluster standard deviation.
-            alpha (float): Learning parameter.
-            message_mean (float): Mean of the jamming message.
-
-        Returns:
-            float: Expected cluster mean.
-        """
-        v = self.calculate_v(prior_std, alpha)
-        return (1 - v) * prior_mu + v * alpha * message_mean
-
-    def expected_cluster_std(self, prior_std):
-        """
-        Compute the expected standard deviation of cluster theta beliefs for the next time step.
-
-        Parameters:
-            prior_std (float): Prior cluster standard deviation.
-
-        Returns:
-            float: Expected cluster standard deviation.
-        """
-        return prior_std**2 / (prior_std**2 + 1)
-
-    def init_message_param(self):
-        """
-        Initialize message parameters and expected cluster theta beliefs for the current and next time steps.
-        """
-        now = self.model.period
-        next_time = now + 1
-        centroids = self.citizen_intel['centroids']
-        clusters = self.citizen_per_cl
-
-        initial_msg_param = {}
-        initial_expected_beliefs = {}
-        for cluster, citizens in clusters.items():
-            initial_mu = [citizen.mu_theta_beliefs[0] for citizen in citizens]
-            std_estimate = np.std(initial_mu)
-            initial_msg_param[cluster] = {"avg": centroids[cluster], "std": 1}
-            initial_expected_beliefs[cluster] = {"avg": centroids[cluster], "std": std_estimate}
-
-        self.msg_param_at_t_per_cluster[now] = initial_msg_param
-        self.msg_param_at_t_per_cluster[next_time] = initial_msg_param
-        self.expected_cluster_theta_beliefs[now] = initial_expected_beliefs
-        self.expected_cluster_theta_beliefs[next_time] = initial_expected_beliefs
-
-    def tune_message_param(self):
-        """
-        Update message parameters and expected cluster theta beliefs for the next time step based on current beliefs.
-        """
-        now = self.model.period
-        next_time = now + 1
-        prior_beliefs = self.expected_cluster_theta_beliefs[now]
-        current_msg_param = self.msg_param_at_t_per_cluster[now]
-
-        posterior_beliefs = {}
-        jamming_msg_param = {}
-        for cluster, params in current_msg_param.items():
-            prior_mu = prior_beliefs[cluster]['avg']
-            prior_std = prior_beliefs[cluster]['std']
-            alpha = 0.95
-            v = self.calculate_v(prior_std, alpha)
-            theta = self.model.state_of_the_world
-            # Avoid division by zero in computing msg_mean
-            if abs(v * alpha - 1) < 1e-8:
-                msg_mean = prior_mu
-            else:
-                msg_mean = (v * alpha * theta - prior_mu - v * alpha * (1 - v) * prior_mu) / (v * alpha - 1)
-            expected_avg = self.expected_cluster_mean(prior_mu, prior_std, alpha, msg_mean)
-            expected_std = self.expected_cluster_std(prior_std)
-            posterior_beliefs[cluster] = {"avg": expected_avg, "std": expected_std}
-            jamming_msg_param[cluster] = {'avg': msg_mean, 'std': 1}
-
-        self.msg_param_at_t_per_cluster[next_time] = jamming_msg_param
-        self.expected_cluster_theta_beliefs[next_time] = posterior_beliefs
-
-    def mu_out(self, n_req, requester):
-        """
-        Generate outgoing jamming messages for a requester based on the current message parameters of the requester's cluster.
-
-        Parameters:
-            n_req (int): Number of messages to generate.
-            requester: The requesting agent.
-
-        Returns:
-            list: Generated message values.
-        """
-        req_id = requester.unique_id
-        req_cluster = self.citizen_intel['membership'][req_id]
-        mu_theta = self.msg_param_at_t_per_cluster[self.model.period][req_cluster]['avg']
-        sd_theta = 1
-        if n_req > 0:
-            return list(np.random.normal(mu_theta, sd_theta, n_req))
-        return []
-
-    def step(self):
-        """
-        Execute one simulation step for the disruptive jammer.
-          - Every 5 steps, re-surveil citizens and reinitialize message parameters.
-          - Otherwise, tune message parameters for the next step.
-        """
-        if self.model.period % 5 == 0:
-            self.surveil_citizen()
-            self.init_message_param()
-        else:
-            self.tune_message_param()
-
+    def mu_out(self, n_req: int, requester) -> list[float]:
+        if n_req <= 0:
+            return []
+        return list(
+            self.model.rng.normal(
+                self._message_mu,
+                self._message_sd,
+                int(n_req),
+            )
+        )
 
 
 class InfoProvider(InfoAgents):
-    """
-    Information provider agent that supplies information on state of the world based on their bias (defined by delta values).
+    """Non-updating elite information provider."""
 
-    * note that they never update their beliefs about the state of the world.
-    """
-    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="infoprovider"):
-        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
-        self.delta = self.model.state_of_the_world - self.mu_theta
+    def __init__(
+        self,
+        legacy_id,
+        pos,
+        model,
+        mu_delta,
+        sd_delta,
+        mu_theta,
+        sd_theta,
+        type_of_agent="infoprovider",
+    ):
+        super().__init__(
+            legacy_id,
+            pos,
+            model,
+            mu_delta,
+            sd_delta,
+            mu_theta,
+            sd_theta,
+            type_of_agent,
+        )
+        self.delta = model.state_of_the_world - self.mu_theta
+
+
+class DisruptiveJammer(InfoAgents):
+    """Audience-adaptive disruptive information provider."""
+
+    def __init__(
+        self,
+        legacy_id,
+        pos,
+        model,
+        mu_delta,
+        sd_delta,
+        mu_theta,
+        sd_theta,
+        type_of_agent="disruptivejammer",
+        surveillance_ability=5,
+    ):
+        super().__init__(
+            legacy_id,
+            pos,
+            model,
+            mu_delta,
+            sd_delta,
+            mu_theta,
+            sd_theta,
+            type_of_agent,
+        )
+        self.surveillance_ability = int(model.surveillance_ability)
+        self.citizen_intel: dict = {}
+        self.citizen_per_cl: dict[int, list[Citizen]] = {}
+        self.msg_param_at_t_per_cluster: dict[int, dict] = {}
+        self.expected_cluster_theta_beliefs: dict[int, dict] = {}
+        self._current_msg_param: dict[int, dict] = {}
+
+    def surveil_citizen(self) -> None:
+        """Cluster current pre-update citizen beliefs at surveillance time."""
+        citizens = self.model.citizens
+        if not citizens:
+            self.citizen_intel = {"centroids": np.asarray([]), "membership": {}}
+            self.citizen_per_cl = {}
+            return
+
+        beliefs = np.asarray([c._message_mu for c in citizens], dtype=float).reshape(-1, 1)
+        ids = [c.unique_id for c in citizens]
+        k = max(1, min(self.surveillance_ability, len(citizens)))
+        random_state = int(self.model.rng.integers(0, 2**31 - 1))
+        kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
+        labels = kmeans.fit_predict(beliefs)
+        centroids = kmeans.cluster_centers_.reshape(-1)
+
+        membership = {cid: int(label) for cid, label in zip(ids, labels)}
+        clusters = {
+            int(label): [
+                c for c in citizens if membership[c.unique_id] == int(label)
+            ]
+            for label in np.unique(labels)
+        }
+
+        self.citizen_intel = {
+            "centroids": centroids,
+            "membership": membership,
+        }
+        self.citizen_per_cl = clusters
+
+    @staticmethod
+    def calculate_v(prior_std: float, alpha: float) -> float:
+        prior_var = max(float(prior_std) ** 2, MIN_VAR)
+        denom = prior_var + 2.0 * alpha - 1.0
+        if abs(denom) < MIN_SD:
+            denom = MIN_SD if denom >= 0 else -MIN_SD
+        return prior_var / denom
+
+    def expected_cluster_mean(
+        self,
+        prior_mu: float,
+        prior_std: float,
+        alpha: float,
+        message_mean: float,
+    ) -> float:
+        v = self.calculate_v(prior_std, alpha)
+        return (1.0 - v) * prior_mu + v * alpha * message_mean
+
+    @staticmethod
+    def expected_cluster_std(prior_std: float) -> float:
+        """Legacy jammer belief forecast retained, returned as an SD."""
+        prior_var = max(float(prior_std) ** 2, MIN_VAR)
+        posterior_var = prior_var / (prior_var + 1.0)
+        return math.sqrt(max(posterior_var, MIN_VAR))
+
+    def _initialize_from_current_surveillance(self) -> None:
+        params = {}
+        expected = {}
+        centroids = self.citizen_intel["centroids"]
+
+        for cluster, citizens in self.citizen_per_cl.items():
+            current = np.asarray([c._message_mu for c in citizens], dtype=float)
+            centroid = float(centroids[cluster])
+            spread = float(current.std(ddof=0)) if current.size > 1 else 1.0
+            spread = max(spread, MIN_SD)
+            params[cluster] = {"avg": centroid, "std": 1.0}
+            expected[cluster] = {"avg": centroid, "std": spread}
+
+        self._current_msg_param = params
+        self.expected_cluster_theta_beliefs = expected
+
+    def _tune_current_message_param(self) -> None:
+        if not self.expected_cluster_theta_beliefs:
+            self._initialize_from_current_surveillance()
+            return
+
+        alpha = 0.95
+        theta = self.model.state_of_the_world
+        tuned = {}
+        next_expected = {}
+
+        for cluster, prior in self.expected_cluster_theta_beliefs.items():
+            prior_mu = float(prior["avg"])
+            prior_std = max(float(prior["std"]), MIN_SD)
+            v = self.calculate_v(prior_std, alpha)
+            denom = v * alpha - 1.0
+            if abs(denom) < 1e-8:
+                msg_mean = prior_mu
+            else:
+                msg_mean = (
+                    v * alpha * theta
+                    - prior_mu
+                    - v * alpha * (1.0 - v) * prior_mu
+                ) / denom
+
+            tuned[cluster] = {"avg": float(msg_mean), "std": 1.0}
+            next_expected[cluster] = {
+                "avg": float(
+                    self.expected_cluster_mean(
+                        prior_mu, prior_std, alpha, msg_mean
+                    )
+                ),
+                "std": float(self.expected_cluster_std(prior_std)),
+            }
+
+        self._current_msg_param = tuned
+        self.expected_cluster_theta_beliefs = next_expected
+
+    def prepare_for_period(self) -> None:
+        """Prepare one common period-t message policy before citizens sample."""
+        if not self.model.jammer_active:
+            # Matched J=0 counterfactual keeps the node and structural source slot
+            # but neutralizes adversarial content.
+            self._current_msg_param = {}
+            return
+
+        refresh = (
+            not self.citizen_intel
+            or self.model.period % self.model.surveillance_interval == 0
+        )
+        if refresh:
+            self.surveil_citizen()
+            self._initialize_from_current_surveillance()
+        else:
+            self._tune_current_message_param()
+
+    def mu_out(self, n_req: int, requester) -> list[float]:
+        if n_req <= 0:
+            return []
+
+        if not self.model.jammer_active:
+            return list(
+                self.model.rng.normal(
+                    self.model.state_of_the_world,
+                    1.0,
+                    int(n_req),
+                )
+            )
+
+        if not self.citizen_intel:
+            self.prepare_for_period()
+
+        cluster = self.citizen_intel["membership"].get(requester.unique_id)
+        if cluster is None:
+            # A structural source should always have a current cluster mapping;
+            # this fallback keeps failure explicit but finite.
+            mean = self.model.state_of_the_world
+            sd = 1.0
+        else:
+            param = self._current_msg_param[cluster]
+            mean = float(param["avg"])
+            sd = float(param.get("std", 1.0))
+
+        return list(self.model.rng.normal(mean, sd, int(n_req)))
+
 
 class Citizen(InfoAgents):
-    """
-    Citizen agent that updates its beliefs (mu_theta and sd_theta) based on received messages.
+    """Citizen who learns state and source credibility."""
 
-    Attributes:
-        mu_theta_beliefs (list): History of mu_theta beliefs.
-        sd_theta_beliefs (list): History of sd_theta beliefs.
-        mu_delta_beliefs (list): History of mu_delta beliefs.
-        sd_delta_beliefs (list): History of sd_delta beliefs.
-        optimal_arm_id_history (list): History of chosen information sources.
-        theta_or_delta_history (list): History indicating whether the agent learned theta or delta.
-        num_request_history (list): History of request counts.
-        theta_or_delta (float): Indicator for learning type (theta or delta).
-    """
-    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="citizen"):
-        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
-        self.mu_theta_beliefs = [mu_theta]
-        self.sd_theta_beliefs = [sd_theta]
-        # Extend delta beliefs by appending copies of the first element
-        self.mu_delta_beliefs = [mu_delta + [mu_delta[0]] * self.model.num_max_citizen_neighbor]
-        self.sd_delta_beliefs = [sd_delta + [sd_delta[0]] * self.model.num_max_citizen_neighbor]
-        self.optimal_arm_id_history = [np.nan]
-        self.theta_or_delta_history = [np.nan]
-        self.num_request_history = [np.nan]
-        self.theta_or_delta = np.nan
-        
+    def __init__(
+        self,
+        legacy_id,
+        pos,
+        model,
+        mu_delta,
+        sd_delta,
+        mu_theta,
+        sd_theta,
+        type_of_agent="citizen",
+    ):
+        super().__init__(
+            legacy_id,
+            pos,
+            model,
+            mu_delta,
+            sd_delta,
+            mu_theta,
+            sd_theta,
+            type_of_agent,
+        )
 
-    def get_neighbor_list(self):
-        """
-        Retrieve a list of neighboring agents (excluding self) from the grid.
+        self.mu_theta_beliefs = [float(mu_theta)]
+        self.sd_theta_beliefs = [max(float(sd_theta), MIN_SD)]
+        self.mu_delta_beliefs: list[list[float]] = []
+        self.sd_delta_beliefs: list[list[float]] = []
 
-        Returns:
-            list: Neighboring agents.
-        """
+        self.mu_delta: dict[InfoAgents, float] = {}
+        self.sd_delta: dict[InfoAgents, float] = {}
 
-        # Keep neighbor ordering deterministic. The legacy implementation
-        # converted this collection to a set, making matched-seed runs depend
-        # on Python object-hash / memory order across processes and Mesa
-        # versions. Sorting by the stable network position makes the RNG stream
-        # reproducible without changing which neighbors are available.
-        neighbors = self.model.grid.get_neighbors(self.pos, include_center=False)
-        by_position = {agent.pos: agent for agent in neighbors}
-        return [by_position[pos] for pos in sorted(by_position)]
+        self.info_source: list[InfoAgents] = []
+        self.credibility_ranked_sources: list[InfoAgents] = []
+        self.frozen_credibility_ranked_sources: list[InfoAgents] | None = None
 
-    def learn_theta_or_delta(self):
-        """
-        Randomly decide whether to learn theta (0) or delta (1) based on model probabilities.
+        self.theta_or_delta_history = [math.nan]
+        self.optimal_arm_id_history = [math.nan]
+        self.num_request_history = [math.nan]
+        self.theta_or_delta = math.nan
+        self.num_request: list[int] = []
 
-        Returns:
-            int: 0 (learn theta) or 1 (learn delta).
-        """
-        return np.random.choice(CHOICE_OPTION, p=self.model.p_pair)
+        self.sampled_msgs: list[list[float]] = []
+        self.reliance_probabilities: dict[InfoAgents, float] = {}
+        self.realized_reliance: dict[InfoAgents, float] = {}
 
-    def ip_or_citizen(self):
-        """
-        Determine whether to choose an information provider or citizen as a counterpart.
+        self._pending_mu_theta = self.mu_theta
+        self._pending_sd_theta = self.sd_theta
+        self._pending_mu_delta: dict[InfoAgents, float] | None = None
+        self._pending_sd_delta: dict[InfoAgents, float] | None = None
+        self._pending_ranking: list[InfoAgents] | None = None
 
-        Returns:
-            str: 'citizen' or 'infoprovider' based on the counterpart selection mechanism.
-        """
-        if self.model.counterpart_pick_mechanism == 'equal':
-            p = [2/4, 2/4]
-        elif self.model.counterpart_pick_mechanism == 'citizen_more':
-            p = [3/4, 1/4]
-        elif self.model.counterpart_pick_mechanism == 'ip_more':
-            p = [1/4, 3/4]
-        else: p = [1/2, 1/2]
-        
-        return np.random.choice(TYPES, p=p)
+    def initialize_source_priors(self, sources: list[InfoAgents]) -> None:
+        self.info_source = list(sources)
+        n = len(sources)
 
-    def pick_counterpart(self):
-        """
-        Select counterpart agents (neighbors or additional citizens) based on the model's mode.
+        def expand(values, default):
+            values = [float(v) for v in values] if values else [float(default)]
+            if len(values) >= n:
+                return values[:n]
+            return values + [values[0]] * (n - len(values))
 
-        Returns:
-            list: Selected counterpart agents.
-        """
-        nmcn = self.model.num_max_citizen_neighbor
-        num_citizen_neighbor = np.random.randint(nmcn+1) # to make sure the upper cap is the maximum number of citizen neighbors defined under model attribute.
+        mu_values = expand(self._initial_mu_delta_input, 0.0)
+        sd_values = [max(v, MIN_SD) for v in expand(self._initial_sd_delta_input, 5.0)]
 
-        all_neighbors = self.get_neighbor_list()
-        
-        citizen_list = [ citizen for citizen in all_neighbors if citizen.type_of_agent == 'citizen' ]
-        elite_info_sources = ['infoprovider', 'disruptivejammer']
+        self.mu_delta = {s: mu_values[i] for i, s in enumerate(sources)}
+        self.sd_delta = {s: sd_values[i] for i, s in enumerate(sources)}
+        self.mu_delta_beliefs = [mu_values.copy()]
+        self.sd_delta_beliefs = [sd_values.copy()]
 
-        baseline_neighbors = [ infoprovider for infoprovider in all_neighbors if infoprovider.type_of_agent in elite_info_sources ] 
+        # Prior ties have no substantive ranking.  Stable seeded shuffling avoids
+        # node-order privilege until the first audit produces evidence.
+        order = list(sources)
+        self.model.rng.shuffle(order)
+        self.credibility_ranked_sources = order
 
-        if self.model.mode == 'baseline':
-            return baseline_neighbors
+    def learn_theta_or_delta(self) -> int:
+        return int(self.model.rng.choice(CHOICE_OPTION, p=self.model.p_pair))
 
-        if self.model.mode == 'random':
-            selected = np.random.choice(citizen_list, num_citizen_neighbor, replace=False)
-            return baseline_neighbors + list(selected)
+    def _behavioral_ranking(self) -> list[InfoAgents]:
+        if (
+            self.model.reliance_mode == "frozen"
+            and self.frozen_credibility_ranked_sources is not None
+        ):
+            return list(self.frozen_credibility_ranked_sources)
+        return list(self.credibility_ranked_sources)
 
-        elif self.model.mode == 'group_id_matching':
-            in_group = [citizen for citizen in citizen_list if citizen.group_id == self.group_id]
-            out_group = [citizen for citizen in citizen_list if citizen.group_id != self.group_id]
-            
-            if num_citizen_neighbor == 0:
-                return baseline_neighbors
-            
-            choices = np.random.choice(['in', 'out'], size=num_citizen_neighbor, p=[0.9, 0.1])
-            n_in = np.count_nonzero(choices == 'in')
-            n_out = num_citizen_neighbor - n_in
-            selected_in = list(np.random.choice(in_group, n_in, replace=False)) if n_in > 0 else []
-            selected_out = list(np.random.choice(out_group, n_out, replace=False)) if n_out > 0 else []
-            
-            return baseline_neighbors + selected_in + selected_out
+    def _equal_audit_requests(self, sources: list[InfoAgents]) -> tuple[list[int], np.ndarray]:
+        n = len(sources)
+        if n == 0:
+            raise ValueError("Citizen has no sources.")
+        base, remainder = divmod(self.model.credit, n)
+        counts = np.full(n, base, dtype=int)
+        if remainder:
+            idx = self.model.rng.choice(n, size=remainder, replace=False)
+            counts[np.asarray(idx, dtype=int)] += 1
+        probs = counts / max(int(counts.sum()), 1)
+        return counts.tolist(), probs.astype(float)
 
-        elif self.model.mode == 'clustered':
-            np.random.shuffle(citizen_list)
-            selected = []
-            for candidate in citizen_list:
-                if len(selected) >= num_citizen_neighbor:
-                    break
-                dist = abs(self.mu_theta - candidate.mu_theta)
-                power = 0.5 if candidate.group_id == self.group_id else 1
-                p_connect = math.exp(-dist * power)
-                if np.random.binomial(1, p_connect):
-                    selected.append(candidate)
-            
-            return baseline_neighbors + selected
-        
-        return baseline_neighbors
-
-
-    def sample_messages(self):
-        """
-        Sample messages from selected information sources based on the learning method.
-        For the cautious method, request probabilities are assigned (possibly via a probability distribution).
-        """
-        learn_method = self.model.learn_method
-        sources = self.info_source
-
-        if learn_method == 'cautious':
-            if self.theta_or_delta == 1:
-                self.num_request = [round(self.model.credit/len(sources))] * len(sources)
-                msgs = [sources[i].mu_out(self.num_request[i], self) for i in range(len(self.num_request))]
-
-            else: 
-                credibility_ranked_sources = self.credibility_ranked_sources
-                num_sources = len(sources)
-
-                if num_sources == 2:
-                    p = [ 1-self.model.epsilon,  self.model.epsilon]
-                else:
-                    p = [ 1-self.model.epsilon ]  # Start with 0.95 for the first source
-                    for i in range(num_sources - 2):
-                        p.append((1 - sum(p)) * (1-self.model.epsilon))  # Assign 95% of the remaining probability
-                    p.append(1 - sum(p))  # Ensure the last value makes the sum exactly 1
-
-                sample_choice = list(np.random.choice(credibility_ranked_sources, p = p, size = self.model.credit))
-
-                self.num_request = [ sample_choice.count(source) for source in credibility_ranked_sources ]
-
-                #sample messages from the sources in credible order and probability ordered in credibility levels.        
-                msgs = [credibility_ranked_sources[i].mu_out(self.num_request[i], self) for i in range(len(self.num_request))]
-
-        self.sampled_msgs = msgs
-
-
-    def learn_delta(self):
-        """
-        Update the agent's delta beliefs using Bayesian updating based on sampled messages.
-        This is used only if self.theta_or_delta == 1 (i.e. when the agent is learning only about the credibility) 
-        """
-        prior_mu_theta = self.mu_theta_beliefs[-1]
-        prior_sd_theta = self.sd_theta_beliefs[-1]
-        
-        msgs = self.sampled_msgs
-        sources = self.info_source
-
-        prior_mu_delta_dict = {source: self.mu_delta_beliefs[-1][sources.index(source)]  for source in sources}
-        prior_sd_delta_dict = {source: self.sd_delta_beliefs[-1][sources.index(source)]  for source in sources}
-
-        posterior_mu_delta_list = []
-        posterior_sd_delta_list = []
-        for source in sources:
-            prior_mu_delta = prior_mu_delta_dict[source]
-            prior_sd_delta = prior_sd_delta_dict[source]
-
-            posterior_mu_delta = (prior_mu_delta * (prior_sd_theta**2 + 1**2) - (np.mean(msgs[sources.index(source)]) - prior_mu_theta) * prior_sd_delta**2)/(prior_sd_theta**2 + prior_sd_delta**2 + 1**2)
-            posterior_mu_delta_list.append(posterior_mu_delta)
-
-            posterior_sd_delta = (prior_sd_delta * 1**2 + prior_sd_delta**2 * prior_sd_theta**2)/(prior_sd_theta**2 + prior_sd_delta**2 + 1**2)
-            posterior_sd_delta_list.append(posterior_sd_delta)
-
-        self.mu_delta_beliefs.append(posterior_mu_delta_list)
-        self.mu_delta = {source: posterior_mu_delta_list[sources.index(source)] for source in sources}
-        self.sd_delta_beliefs.append(posterior_sd_delta_list)
-        self.sd_delta = {source: posterior_sd_delta_list[sources.index(source)] for source in sources}
-
-    def bayesian_update_mu_theta(self, msgs):
-        """
-        Perform Bayesian update of mu_theta based on sampled messages.
-
-        Parameters:
-            msgs (list): List of message values.
-
-        Returns:
-            float: Updated mu_theta.
-        """
-        prior_mu_theta = self.mu_theta_beliefs[-1]
-        prior_sd_theta = self.sd_theta_beliefs[-1]
-        mean_msgs = np.mean(msgs)
-        MIN_STD = 1e-5
-        std_msgs = max(np.std(msgs), MIN_STD)
-
-        posterior_mu_theta = prior_mu_theta + (mean_msgs - prior_mu_theta)*prior_sd_theta**2/(prior_sd_theta**2 + std_msgs**2)
-        return posterior_mu_theta
-
-    def bayesian_update_sd_theta(self, msgs):
-        """
-        Perform Bayesian update of sd_theta based on sampled messages.
-
-        Parameters:
-            msgs (list): List of message values.
-
-        Returns:
-            float: Updated sd_theta.
-        """
-        prior_sd_theta = self.sd_theta_beliefs[-1]
-        mean_msgs = np.mean(msgs)
-        MIN_STD = 1e-5
-        std_msgs = max(np.std(msgs), MIN_STD)
-
-        posterior_sd_theta = (prior_sd_theta**2 * std_msgs**2) / (prior_sd_theta**2 + std_msgs**2)
-
-        #### THIS LINE SHOULD BE FIXED LATER ####
-        #if posterior_sd_theta > 10**5:
-            #posterior_sd_theta = 10**5
-
-        return posterior_sd_theta
-
-    def calculate_z_stat(self):
-        """
-        Calculate z-statistics for each information source to assess credibility based on the difference between message means and posterior updates.
-        """
-        prior_sd_theta = self.sd_theta_beliefs[-1]
-        
-        msgs = self.sampled_msgs
-        sources = self.info_source
-
-        z_dict = {}
-        for i, source in enumerate(sources):
-            msg = msgs[i]
-            posterior = self.bayesian_update_mu_theta(msg)
-            MIN_STD = 1e-5
-            sd_msg = max(np.std(msg), MIN_STD)
-
-            z_dict[source] = abs((np.mean(msg) - posterior)/math.sqrt(1+(prior_sd_theta**2 / sd_msg**2)))
-
-        self.z_statistics = z_dict
-
-    def decide_optimal_arm(self):
-        """
-        Determine the optimal information source (arm) based on the credibility score for exploitation.
-        Uses delta comparison or z-statistics as defined by the model.
-        """
-        if self.model.comparison_rule == "delta_comparison":
-            self.learn_delta()
-            credibility_dict = self.mu_delta
-            for key, value in credibility_dict.items():
-                # convert delta values into absolute values
-                credibility_dict[key] = abs(value)
+    def sample_messages(self) -> None:
+        """Sample period-t messages and record Pi_t and realized X_t."""
+        if self.theta_or_delta == 1:
+            ordered_sources = list(self.info_source)
+            counts, policy = self._equal_audit_requests(ordered_sources)
         else:
-            self.calculate_z_stat()
-            credibility_dict = self.z_statistics
+            ordered_sources = self._behavioral_ranking()
+            policy = recursive_rank_probabilities(
+                len(ordered_sources),
+                self.model.epsilon,
+            )
+            choices = self.model.rng.choice(
+                len(ordered_sources),
+                p=policy,
+                size=self.model.credit,
+            )
+            counts = [
+                int(np.count_nonzero(choices == idx))
+                for idx in range(len(ordered_sources))
+            ]
 
-        # Convert dictionary to a list of (key, value) tuples
-        items = list(credibility_dict.items())
+        messages = [
+            ordered_sources[i].mu_out(counts[i], self)
+            for i in range(len(ordered_sources))
+        ]
 
-        # Shuffle the items to randomize order for equal values
-        np.random.shuffle(items)
+        self._sample_order = ordered_sources
+        self.num_request = counts
+        self.sampled_msgs = messages
 
-        # Sort the shuffled items by credibility score value in ascending order
-        sorted_items = sorted(items, key=lambda x: x[1], reverse=False)
+        self.reliance_probabilities = {
+            source: float(policy[i])
+            for i, source in enumerate(ordered_sources)
+        }
+        total = max(sum(counts), 1)
+        self.realized_reliance = {
+            source: counts[i] / total
+            for i, source in enumerate(ordered_sources)
+        }
 
-        self.credibility_ranked_sources = [item[0] for item in sorted_items]
-        #credibility_ranked_sources = {}
-        #for agent, cred_score in sorted_items:
-            #credibility_ranked_sources[agent] = cred_score
+    def bayesian_update_theta(self, msgs: Iterable[float]) -> tuple[float, float]:
+        prior_mu = float(self.mu_theta_beliefs[-1])
+        prior_var = max(float(self.sd_theta_beliefs[-1]) ** 2, MIN_VAR)
+        obs_mu, obs_mean_var = _observation_mean_variance(
+            msgs,
+            single_message_variance=self.model.single_message_variance,
+        )
 
-        #self.credibility_ranked_sources_dict = credibility_ranked_sources
-        #self.credibility_ranked_sources = list(credibility_ranked_sources.keys())
+        post_var = 1.0 / (1.0 / prior_var + 1.0 / obs_mean_var)
+        post_mu = post_var * (
+            prior_mu / prior_var + obs_mu / obs_mean_var
+        )
+        return float(post_mu), math.sqrt(max(float(post_var), MIN_VAR))
 
-    def clear_messages(self):
+    # Compatibility wrappers used by archived diagnostics.
+    def bayesian_update_mu_theta(self, msgs) -> float:
+        return self.bayesian_update_theta(msgs)[0]
+
+    def bayesian_update_sd_theta(self, msgs) -> float:
+        return self.bayesian_update_theta(msgs)[1]
+
+    def learn_delta(self) -> tuple[dict, dict]:
+        """Bayesian source-displacement update with dimensionally consistent SDs.
+
+        Message model for source s:
+            mean(message_s) ~= theta - delta_s + noise.
+
+        Marginalizing over citizen uncertainty in theta gives an observation of
+        delta_s, z_s = mu_theta - mean(message_s), with variance equal to the
+        citizen's current theta variance plus the sampling variance of the
+        source-message mean.
         """
-        Clear stored sampled messages.
-        """
-        self.sampled_msgs = []
+        prior_mu_theta = float(self.mu_theta_beliefs[-1])
+        prior_var_theta = max(float(self.sd_theta_beliefs[-1]) ** 2, MIN_VAR)
 
-    def step(self):
-        """
-        Execute a simulation step for the citizen agent:
-          - At time 0, initialize neighbors and information sources.
-          - In subsequent steps, update counterparts, decide on learning type, sample messages,
-            update beliefs, and record history.
-        """
-            #if self.model.mode == 'incidental_learning_allowed':
-                #self.info_source = self.pick_counterpart()
-            #else: pass
+        new_mu = dict(self.mu_delta)
+        new_sd = dict(self.sd_delta)
+
+        by_source = {
+            source: self.sampled_msgs[self._sample_order.index(source)]
+            if source in self._sample_order
+            else []
+            for source in self.info_source
+        }
+
+        for source in self.info_source:
+            msgs = by_source[source]
+            if not msgs:
+                continue
+
+            msg_mean, msg_mean_var = _observation_mean_variance(
+                msgs,
+                single_message_variance=self.model.single_message_variance,
+            )
+            observed_delta = prior_mu_theta - msg_mean
+            observation_var = prior_var_theta + msg_mean_var
+
+            prior_mu_delta = float(self.mu_delta[source])
+            prior_var_delta = max(float(self.sd_delta[source]) ** 2, MIN_VAR)
+
+            post_var = 1.0 / (
+                1.0 / prior_var_delta + 1.0 / observation_var
+            )
+            post_mu = post_var * (
+                prior_mu_delta / prior_var_delta
+                + observed_delta / observation_var
+            )
+
+            new_mu[source] = float(post_mu)
+            new_sd[source] = math.sqrt(max(float(post_var), MIN_VAR))
+
+        return new_mu, new_sd
+
+    def calculate_z_stat(self) -> dict:
+        """Return a standardized discrepancy score for each sampled source."""
+        prior_mu = float(self.mu_theta_beliefs[-1])
+        prior_var = max(float(self.sd_theta_beliefs[-1]) ** 2, MIN_VAR)
+        z = {}
+
+        for source in self.info_source:
+            if source not in self._sample_order:
+                z[source] = math.inf
+                continue
+            msgs = self.sampled_msgs[self._sample_order.index(source)]
+            if not msgs:
+                z[source] = math.inf
+                continue
+            msg_mean, mean_var = _observation_mean_variance(
+                msgs,
+                single_message_variance=self.model.single_message_variance,
+            )
+            z[source] = abs(msg_mean - prior_mu) / math.sqrt(
+                max(prior_var + mean_var, MIN_VAR)
+            )
+        return z
+
+    def _rank_from_scores(self, scores: dict[InfoAgents, float]) -> list[InfoAgents]:
+        items = list(scores.items())
+        self.model.rng.shuffle(items)
+        items.sort(key=lambda item: item[1])
+        return [source for source, _ in items]
+
+    def decide_optimal_arm(self) -> tuple[dict | None, dict | None, list[InfoAgents]]:
+        if self.model.comparison_rule == "delta_comparison":
+            new_mu, new_sd = self.learn_delta()
+            scores = {source: abs(new_mu[source]) for source in self.info_source}
+            ranking = self._rank_from_scores(scores)
+            return new_mu, new_sd, ranking
+
+        scores = self.calculate_z_stat()
+        ranking = self._rank_from_scores(scores)
+        return None, None, ranking
+
+    def stage_period(self) -> None:
         self.theta_or_delta = self.learn_theta_or_delta()
         self.sample_messages()
-        msgs=self.sampled_msgs
+
+    def compute_pending_update(self) -> None:
+        self._pending_mu_theta = float(self.mu_theta_beliefs[-1])
+        self._pending_sd_theta = float(self.sd_theta_beliefs[-1])
+        self._pending_mu_delta = None
+        self._pending_sd_delta = None
+        self._pending_ranking = None
 
         if self.theta_or_delta == 1:
-            self.decide_optimal_arm()
-            mu_theta = self.mu_theta_beliefs[-1]
-            sd_theta = self.sd_theta_beliefs[-1]
-        else: 
-            mu_theta = self.bayesian_update_mu_theta( [m for msg in msgs for m in msg] )
-            sd_theta = self.bayesian_update_sd_theta( [m for msg in msgs for m in msg] )
-                
-        self.mu_theta_beliefs.append(mu_theta)
-        self.sd_theta_beliefs.append(sd_theta)
-        self.mu_theta = mu_theta
-        self.sd_theta = sd_theta
-        #self.theta_or_delta_history.append(self.theta_or_delta)
-        #self.optimal_arm_id_history.append(self.credibility_ranked_sources_dict)
-        self.num_request_history.append(self.num_request)
-        self.clear_messages()
+            new_mu_delta, new_sd_delta, ranking = self.decide_optimal_arm()
+            self._pending_mu_delta = new_mu_delta
+            self._pending_sd_delta = new_sd_delta
+            self._pending_ranking = ranking
+        else:
+            flat_messages = [
+                message
+                for source_messages in self.sampled_msgs
+                for message in source_messages
+            ]
+            if flat_messages:
+                (
+                    self._pending_mu_theta,
+                    self._pending_sd_theta,
+                ) = self.bayesian_update_theta(flat_messages)
+
+    def commit_pending_update(self) -> None:
+        self.mu_theta = float(self._pending_mu_theta)
+        self.sd_theta = max(float(self._pending_sd_theta), MIN_SD)
+        self.mu_theta_beliefs.append(self.mu_theta)
+        self.sd_theta_beliefs.append(self.sd_theta)
+
+        if self._pending_mu_delta is not None:
+            self.mu_delta = dict(self._pending_mu_delta)
+        if self._pending_sd_delta is not None:
+            self.sd_delta = dict(self._pending_sd_delta)
+
+        self.mu_delta_beliefs.append(
+            [float(self.mu_delta[s]) for s in self.info_source]
+        )
+        self.sd_delta_beliefs.append(
+            [float(self.sd_delta[s]) for s in self.info_source]
+        )
+
+        if self._pending_ranking is not None:
+            self.credibility_ranked_sources = list(self._pending_ranking)
+            if (
+                self.model.reliance_mode == "frozen"
+                and self.frozen_credibility_ranked_sources is None
+            ):
+                self.frozen_credibility_ranked_sources = list(
+                    self._pending_ranking
+                )
+
+        self.theta_or_delta_history.append(self.theta_or_delta)
+        self.optimal_arm_id_history.append(
+            [int(s.pos) for s in self._behavioral_ranking()]
+        )
+        self.num_request_history.append(list(self.num_request))
+
+        self.sampled_msgs = []
+        self._sample_order = []
 
 
-# ----------------------
-# Main Execution
-# ----------------------
-if __name__=="__main__":
-    my_info_sampling_model = InfoSampleModel()
-    #my_info_model.datacollector.get_agent_vars_dataframe()
-
+if __name__ == "__main__":
+    model = InfoSampleModel(rng=12345)
+    model.run_model()
