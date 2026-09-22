@@ -23,13 +23,13 @@ jobs:
       - name: Checkout harness
         uses: actions/checkout@v4
         with:
-          ref: mesa-3.5-migration
+          ref: ${{ github.sha }}
           path: harness
 
       - name: Checkout legacy model
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: 23ab1d07b5cc0c4969ab7ce03cfd1e6ecf971f56
           path: legacy
 
       - name: Set up Python 3.11
@@ -65,7 +65,7 @@ jobs:
       - name: Checkout migrated model
         uses: actions/checkout@v4
         with:
-          ref: mesa-3.5-migration
+          ref: ${{ github.sha }}
           path: current
 
       - name: Set up Python 3.12
@@ -106,7 +106,7 @@ jobs:
       - name: Checkout comparator
         uses: actions/checkout@v4
         with:
-          ref: mesa-3.5-migration
+          ref: ${{ github.sha }}
           path: harness
 
       - name: Download legacy snapshot
