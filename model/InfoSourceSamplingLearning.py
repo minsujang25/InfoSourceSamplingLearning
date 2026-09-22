@@ -594,10 +594,9 @@ class Citizen(InfoAgents):
         # on Python object-hash / memory order across processes and Mesa
         # versions. Sorting by the stable network position makes the RNG stream
         # reproducible without changing which neighbors are available.
-        return sorted(
-            self.model.grid.get_neighbors(self.pos, include_center=False),
-            key=lambda agent: agent.pos,
-        )
+        neighbors = self.model.grid.get_neighbors(self.pos, include_center=False)
+        by_position = {agent.pos: agent for agent in neighbors}
+        return [by_position[pos] for pos in sorted(by_position)]
 
     def learn_theta_or_delta(self):
         """
