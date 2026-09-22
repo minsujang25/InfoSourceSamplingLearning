@@ -164,7 +164,8 @@ class InfoSampleModel(Model):
         *,
         network_environment: str | None = None,
         reliance_mode: str = "adaptive",
-        peer_degree: int | None = None,
+        local_degree: int = 2,
+        peer_degree: int = 2,
         same_group_probability: float = 0.9,
         elite_access_probability: float = 0.10,
         jammer_active: bool = True,
@@ -207,29 +208,19 @@ class InfoSampleModel(Model):
         if self.reliance_mode not in {"adaptive", "frozen"}:
             raise ValueError("reliance_mode must be 'adaptive' or 'frozen'.")
 
-        self.network_environment = str(
+        raw_environment = str(
             take(
                 "network_environment",
                 network_environment or self._legacy_environment_alias(self.mode),
             )
         ).lower()
-        configured_peer_degree = take("peer_degree", peer_degree)
-        if configured_peer_degree is None:
-            if self.network_environment in {
-                "random_peer",
-                "homophilous_peer",
-                "extended",
-            }:
-                configured_peer_degree = (
-                    self.num_max_citizen_neighbor
-                    if self.num_max_citizen_neighbor > 0
-                    else 2
-                )
-            else:
-                configured_peer_degree = max(0, self.num_max_citizen_neighbor)
-        self.peer_degree = int(configured_peer_degree)
-        if self.peer_degree < 0:
-            raise ValueError("peer_degree must be nonnegative.")
+        self.network_environment = self._normalize_environment(raw_environment)
+
+        self.local_degree = int(take("local_degree", local_degree))
+        self.peer_degree = int(take("peer_degree", peer_degree))
+        if self.local_degree < 0 or self.peer_degree < 0:
+            raise ValueError("local_degree and peer_degree must be nonnegative.")
+
         self.same_group_probability = float(
             take("same_group_probability", same_group_probability)
         )
@@ -272,11 +263,11 @@ class InfoSampleModel(Model):
 
     @staticmethod
     def _legacy_environment_alias(mode: str) -> str:
-        """Map old mode labels without pretending they are the new 4-way design.
+        """Map legacy mode labels to explicit compatibility environments.
 
-        Legacy random/group modes always granted direct elite access, so they
-        map to explicit compatibility environments.  Paper B production runs
-        should use network_environment directly.
+        The old random/group modes always included both elite sources and then
+        added 0..num_max_citizen_neighbor peers. They therefore do not
+        implement the manuscript's Random 2 or Group ID environments.
         """
         mapping = {
             "baseline": "elite_only",
@@ -286,6 +277,22 @@ class InfoSampleModel(Model):
             "incidental_learning_allowed": "legacy_extended_random",
         }
         return mapping.get(mode, mode)
+
+    @staticmethod
+    def _normalize_environment(environment: str) -> str:
+        """Normalize public aliases to the four manuscript environment names."""
+        aliases = {
+            "isolated": "elite_only",
+            "isolated_elite": "elite_only",
+            "isolated_elite_exposure": "elite_only",
+            "random_peer": "random_2",
+            "random2": "random_2",
+            "random_2_matching": "random_2",
+            "homophilous_peer": "group_id",
+            "group_id_matching": "group_id",
+            "extended_network": "extended",
+        }
+        return aliases.get(environment, environment)
 
     def _placement_graph(
         self,
@@ -385,6 +392,40 @@ class InfoSampleModel(Model):
         peers = [c for c in self.citizens if c is not citizen]
         return self._sample_without_replacement(peers, degree)
 
+    def _random_local_sources(self, citizen: "Citizen", degree: int) -> list["InfoAgents"]:
+        """Random 2: sample exactly the requested number of local sources.
+
+        The opportunity pool contains citizens, the Expert, and the Jammer.
+        Direct elite access is therefore localized rather than guaranteed.
+        """
+        pool = [agent for agent in self.agents if agent is not citizen]
+        return self._sample_without_replacement(pool, degree)
+
+    def _group_id_local_sources(self, citizen: "Citizen", degree: int) -> list["InfoAgents"]:
+        """Group ID: exact local degree with predominantly same-group sources.
+
+        Group membership is fixed from the initial/source location sign. The
+        Expert at mu=0 belongs to the non-positive group, while the Jammer's
+        positive underlying position places it in the positive group. Elite
+        nodes are therefore embedded in the same group-based opportunity pool
+        as citizens rather than attached universally.
+        """
+        pool = [agent for agent in self.agents if agent is not citizen]
+        same = [agent for agent in pool if agent.group_id == citizen.group_id]
+        other = [agent for agent in pool if agent.group_id != citizen.group_id]
+
+        selected: list[InfoAgents] = []
+        for _ in range(min(degree, len(pool))):
+            want_same = bool(self.rng.random() < self.same_group_probability)
+            preferred = [a for a in (same if want_same else other) if a not in selected]
+            fallback = [a for a in (other if want_same else same) if a not in selected]
+            candidates = preferred or fallback
+            if not candidates:
+                break
+            chosen = candidates[int(self.rng.integers(0, len(candidates)))]
+            selected.append(chosen)
+        return selected
+
     def _homophilous_peer_sources(self, citizen: "Citizen", degree: int) -> list["Citizen"]:
         peers = [c for c in self.citizens if c is not citizen]
         same = [c for c in peers if c.group_id == citizen.group_id]
@@ -435,16 +476,16 @@ class InfoSampleModel(Model):
             if env == "elite_only":
                 sources = list(self.elite_sources)
 
-            elif env == "random_peer":
-                sources = (
-                    self._localized_elites()
-                    + self._random_peer_sources(citizen, self.peer_degree)
+            elif env == "random_2":
+                sources = self._random_local_sources(
+                    citizen,
+                    self.local_degree,
                 )
 
-            elif env == "homophilous_peer":
-                sources = (
-                    self._localized_elites()
-                    + self._homophilous_peer_sources(citizen, self.peer_degree)
+            elif env == "group_id":
+                sources = self._group_id_local_sources(
+                    citizen,
+                    self.local_degree,
                 )
 
             elif env == "extended":
@@ -474,7 +515,7 @@ class InfoSampleModel(Model):
             else:
                 raise ValueError(
                     f"Unknown network_environment={env!r}. "
-                    "Use elite_only, random_peer, homophilous_peer, extended, "
+                    "Use elite_only, random_2, group_id, extended, "
                     "or an explicit legacy_extended_* compatibility environment."
                 )
 
