@@ -27,8 +27,8 @@ def build_config(
     network_environment="extended",
     jammer_k=1,
     seed=20260922,
+    n=14,
 ):
-    n = 14
     rng = np.random.default_rng(seed)
     citizen_mu = list(rng.normal(0.0, 1.0, n - 2))
     return {
@@ -49,9 +49,9 @@ def build_config(
         "mode": "baseline",
         "network_environment": network_environment,
         "reliance_mode": reliance_mode,
+        "local_degree": 2,
         "peer_degree": 2,
         "same_group_probability": 0.9,
-        "elite_access_probability": 0.25,
         "jammer_active": True,
         "surveil_ability": jammer_k,
         "surveillance_interval": 5,
@@ -145,6 +145,77 @@ def check_jammer_resurveillance_uses_current_beliefs():
     assert math.isclose(second, 10.0, abs_tol=1e-8)
 
 
+def check_environment_mapping():
+    # Isolated: universal access to exactly the two elites.
+    isolated = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="elite_only",
+            n=102,
+        ),
+        rng=21,
+    )
+    for citizen in isolated.citizens:
+        assert len(citizen.info_source) == 2
+        assert {
+            source.type_of_agent for source in citizen.info_source
+        } == {"infoprovider", "disruptivejammer"}
+
+    # Random 2: exactly two local sources from the full non-ego pool.
+    random2 = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="random_2",
+            n=102,
+        ),
+        rng=22,
+    )
+    assert all(len(c.info_source) == 2 for c in random2.citizens)
+    # Direct elite access must be localized, not universal.
+    assert any(
+        all(source.type_of_agent == "citizen" for source in c.info_source)
+        for c in random2.citizens
+    )
+
+    # Group ID: exact degree two, predominantly same-group but not perfectly
+    # segregated under the 0.9/0.1 mixing rule.
+    group_id = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="group_id",
+            n=202,
+        ),
+        rng=23,
+    )
+    assert all(len(c.info_source) == 2 for c in group_id.citizens)
+    same = 0
+    total = 0
+    for citizen in group_id.citizens:
+        for source in citizen.info_source:
+            same += int(source.group_id == citizen.group_id)
+            total += 1
+    same_share = same / total
+    assert 0.80 < same_share < 0.98
+
+    # Extended: both elites plus exactly two citizen peers.
+    extended = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="extended",
+            n=102,
+        ),
+        rng=24,
+    )
+    for citizen in extended.citizens:
+        assert len(citizen.info_source) == 4
+        elite_count = sum(
+            source.type_of_agent in {"infoprovider", "disruptivejammer"}
+            for source in citizen.info_source
+        )
+        peer_count = sum(
+            source.type_of_agent == "citizen"
+            for source in citizen.info_source
+        )
+        assert elite_count == 2
+        assert peer_count == 2
+
+
 def check_finite_multiperiod_run():
     model = InfoSampleModel(
         model_attribute=build_config(
@@ -174,6 +245,7 @@ def main():
         check_synchronous_message_snapshot,
         check_first_audit_freeze,
         check_jammer_resurveillance_uses_current_beliefs,
+        check_environment_mapping,
         check_finite_multiperiod_run,
     ]
     for check in checks:
