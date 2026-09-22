@@ -712,7 +712,11 @@ class DisruptiveJammer(InfoAgents):
         beliefs = np.asarray([c._message_mu for c in citizens], dtype=float).reshape(-1, 1)
         ids = [c.unique_id for c in citizens]
         k = max(1, min(self.surveillance_ability, len(citizens)))
-        random_state = int(self.model.rng.integers(0, 2**31 - 1))
+        # Use a deterministic clustering seed that does not consume the
+        # citizen/model RNG stream.  This preserves matched stochastic streams
+        # across J=1/J=0 and K counterfactuals as far as the behavioral paths
+        # themselves permit.
+        random_state = int(17 + 1009 * k + 7919 * self.model.period)
         kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
         labels = kmeans.fit_predict(beliefs)
         centroids = kmeans.cluster_centers_.reshape(-1)
