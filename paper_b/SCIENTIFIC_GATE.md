@@ -46,14 +46,18 @@ Before production runs, CI must verify:
 - expected reliance shares sum to one;
 - no run is silently rescued through clipping.
 
-## Remaining design gate
+## Four-environment design gate — cleared
 
-The only substantive design item still requiring a production freeze is the exact
-parameterization of the four accepted-abstract communication environments, especially
-localized elite access in the sparse Random and Homophilous conditions.
+The final design audit maps the manuscript environments as follows:
 
-This is a design-mapping decision, not a reason to alter the reconstructed learning
-or timing mechanisms.
+- isolated elite exposure: Expert + Jammer only;
+- Random 2: exactly two local sources from the full citizen+elite pool;
+- Group ID: exactly two local sources with a 0.9 same-group / 0.1 cross-group preference, with elite nodes embedded in the same pool;
+- Extended: Expert + Jammer + exactly two random citizen peers.
+
+The legacy random/group implementations did not match the current manuscript description because both attached both elites universally and then added a random 0..cap number of citizen peers. They are retained only under explicit `legacy_extended_*` compatibility aliases.
+
+See `NETWORK_ENVIRONMENT_AUDIT.md`.
 
 ## Evidence rule
 
