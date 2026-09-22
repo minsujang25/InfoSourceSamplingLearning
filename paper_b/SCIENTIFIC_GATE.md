@@ -1,52 +1,62 @@
-# Paper B Scientific Gate
+# Paper B Scientific Gate — Reconstruction Branch
 
-The Mesa framework migration itself has passed a strict 24/24 matched-seed
-comparison after normalizing a legacy unordered-neighbor bug.
+The Mesa 2.4 -> 3.5 migration gate is complete. This branch begins a new gate:
+scientific correspondence between the frozen Paper B theory and the executable model.
 
-Two scientific issues remain deliberately separate from that migration gate.
+## Resolved correctness issues
 
-## 1. Non-finite extreme run
+### Theta uncertainty
 
-The diagnostic condition `group_polarized_k4_n5_delta`, seed 101, reaches
-non-finite citizen beliefs in both Mesa 2.4 and Mesa 3.5. This is not a migration
-difference: the trajectories are identical across versions.
+The legacy code computed a Gaussian posterior variance but stored it as `sd_theta`.
+The reconstruction stores a standard deviation consistently by taking the square root
+of posterior variance. Arbitrary clipping is not used.
 
-It *is* a substantive numerical-stability issue. Full Paper B simulations must
-not silently accept such runs. The new pipeline therefore includes
-`paper_b.validation.assert_finite_state()`, and production runners should fail
-fast or mark a run invalid whenever a citizen belief or uncertainty becomes
-non-finite.
+### Source-displacement uncertainty
 
-Before the main simulation grid is launched, the source of the explosive
-trajectory should be audited and either:
+The legacy `sd_delta` recurrence mixed SD and variance units. The reconstruction
+uses a dimensionally consistent Gaussian posterior and stores its square-root variance.
 
-- corrected with a theoretically justified numerical/model fix, followed by a
-  new backtest; or
-- explicitly bounded by a defensible parameter-domain restriction.
+### Synchronous social learning
 
-Do not solve it by silently clipping beliefs after the fact.
+The old `Citizen.step()` mutated `mu_theta` and `sd_theta` immediately, allowing
+later-executing citizens in the same period to sample already-updated peer states.
+The reconstruction snapshots all message states before any citizen update and commits
+all posterior states only after every citizen has computed its period-t update.
 
-## 2. Frozen-reliance semantics
+### Jammer re-surveillance
 
-The current model adapts source use through credibility learning and ranked
-epsilon-greedy sampling. A frozen-reliance counterfactual can be implemented in
-more than one defensible way, for example:
+Legacy re-surveillance read `mu_theta_beliefs[0]`, i.e. initial beliefs. The
+reconstruction clusters the current pre-update belief landscape.
 
-- freeze the initial source allocation at equal/static weights; or
-- allow an initialization phase and then freeze the first realized credibility
-  ranking.
+### Frozen reliance
 
-Those are substantively different treatments. The scaffold therefore records
-`reliance_mode` in configuration but does not yet change model behavior.
+The primary frozen counterfactual is now fixed: behavioral source ranking is frozen
+after the first credibility audit. Later credibility and substantive learning continue,
+but later audits cannot change acquisition ranking.
 
-The exact frozen condition should be frozen in the analysis plan before code is
-added.
+## Theory-aligned invariants
 
-## Next implementation order
+Before production runs, CI must verify:
 
-1. Audit the non-finite trajectory.
-2. Freeze the behavioral definition of adaptive vs frozen reliance.
-3. Add one switch to the shared model; do not fork separate model classes.
-4. Add time-indexed source-request/reliance logging.
-5. Run a small paired adaptive/frozen milestone.
-6. Only after that add redundancy and controlled-homophily experiments.
+- recursive rank-based exploration nests `(1-epsilon, epsilon)`;
+- citizen outgoing messages use period-t snapshot states;
+- posterior SDs remain positive and finite;
+- first-audit-frozen ranking does not drift;
+- Jammer refreshes track current beliefs;
+- expected reliance shares sum to one;
+- no run is silently rescued through clipping.
+
+## Remaining design gate
+
+The only substantive design item still requiring a production freeze is the exact
+parameterization of the four accepted-abstract communication environments, especially
+localized elite access in the sparse Random and Homophilous conditions.
+
+This is a design-mapping decision, not a reason to alter the reconstructed learning
+or timing mechanisms.
+
+## Evidence rule
+
+Legacy figures are historical diagnostics only. Corrected simulations determine which
+previous qualitative patterns survive. Theory should not be rewritten merely to
+preserve archived output.
