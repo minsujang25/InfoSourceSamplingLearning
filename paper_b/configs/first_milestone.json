@@ -1,0 +1,33 @@
+{
+  "design_version": 1,
+  "status": "scaffold_only",
+  "description": "First Paper B receiver-side milestone after scientific gates are cleared.",
+  "factors": {
+    "initial_belief_regime": ["flat", "consensus", "polarized"],
+    "reliance_mode": ["adaptive", "frozen"],
+    "network_environment": "TO_BE_MAPPED_FROM_EXTENDED_ABSTRACT_TO_IMPLEMENTATION"
+  },
+  "pairing": {
+    "matched_seed": true,
+    "same_initial_beliefs": true,
+    "same_structural_network": true,
+    "same_adversarial_environment": true
+  },
+  "jammer": {
+    "role": "fixed_stress_condition",
+    "default_k": 1,
+    "detailed_k_sweep": "secondary_robustness"
+  },
+  "primary_mechanism_outputs": [
+    "expert_reliance",
+    "jammer_reliance",
+    "peer_reliance",
+    "effective_influence_concentration",
+    "effective_homophily"
+  ],
+  "downstream_outputs": [
+    "belief_mae",
+    "belief_dispersion",
+    "fragmentation"
+  ]
+}
