@@ -4,7 +4,7 @@ different types of agents.
 Author: MJ 
 v 0.0.0.1
 
-Note: This is built under Mesa 2.4 
+Note: This implementation targets Mesa 3.5.1 
 """
 
 import math
@@ -16,8 +16,6 @@ from copy import deepcopy
 from sklearn.cluster import KMeans
 
 from mesa import Agent, Model
-from mesa.time import RandomActivation, SimultaneousActivation
-from mesa.datacollection import DataCollector
 from mesa.space import NetworkGrid
 
 import sys
@@ -114,8 +112,9 @@ class InfoSampleModel(Model):
         network_structure=None, learn_method='naive', counterpart_pick_mechanism = 'equal', 
         num_max_citizen_neighbor = 0, max_steps = 1000,
         model_attribute=None,
-        state_of_the_world = random_state_assignment()):
-        super().__init__()
+        state_of_the_world=None,
+        rng=None):
+        super().__init__(rng=rng)
         self.model_attribute = model_attribute
 
         # Set model parameters based on provided attributes or default values.
@@ -134,7 +133,11 @@ class InfoSampleModel(Model):
             self.num_max_citizen_neighbor = model_attribute['num_max_citizen_neighbor']
             self.max_steps = model_attribute['max_steps']
         else:
-            self.state_of_the_world = state_of_the_world
+            self.state_of_the_world = (
+                random_state_assignment()
+                if state_of_the_world is None
+                else state_of_the_world
+            )
             self.num_nodes = num_nodes
             self.comparison_rule = comparison_rule
             self.epsilon = epsilon
@@ -155,10 +158,10 @@ class InfoSampleModel(Model):
         elif self.network_type == 'manually_defined':
             self.network = model_attribute['network_structure']
  
-        # Set up grid and scheduler.
+        # Set up the network space. Mesa 3.x automatically tracks all agents
+        # in model.agents, so an explicit scheduler is no longer needed.
         self.grid = NetworkGrid(self.network)
-        self.schedule = SimultaneousActivation(self)
-        self.time = 0
+        self.period = 0
 
         # Data tracking attributes.
         self.agent_mu_theta_list = []
@@ -172,23 +175,20 @@ class InfoSampleModel(Model):
             for i,node in enumerate(sorted(self.network.nodes())):
                 #### mu_delta & sd_delta should be in the form of [mu_delta_0, mu_delta_1] & [sd_delta_0, sd_delta_1] ###
                 its_alive=self.model_attribute['type_of_agent'][i](i,node,self, mu_delta=self.model_attribute['mu_delta'][i], sd_delta=self.model_attribute['sd_delta'][i], mu_theta=self.model_attribute['mu_theta'][i], sd_theta=self.model_attribute['sd_theta'][i])
-                self.schedule.add(its_alive)
                     # Add the agent to the node, this adds .pos attr to agent
                 self.grid.place_agent(its_alive, node)
-            for i,node in enumerate(sorted(self.network.nodes())):
-                self.network.nodes[node]["agent"].append(self.schedule.agents[i])
+            # NetworkGrid.place_agent() already records the agent on the node.
+            # Do not append it a second time; doing so duplicates neighbors.
 
         elif self.model_attribute is not None and self.model_attribute['seq_meaningful'] is not True:
             for i,node in enumerate(self.network.nodes()):
                 its_alive=self.model_attribute['type_of_agent'][i](i,node,self, mu_delta=self.model_attribute['mu_delta'][i], sd_delta=self.model_attribute['sd_delta'][i], mu_theta=self.model_attribute['mu_theta'][i], sd_theta=self.model_attribute['sd_theta'][i])
-                self.schedule.add(its_alive)
                     # Add the agent to the node, this adds .pos attr to agent
                 self.grid.place_agent(its_alive, node)
 
         else:
             for i,node in enumerate(self.network.nodes()):
                 its_alive = self.types_and_proportions[temp_type_list[i]][1](i,node,self, mu_delta=np.random.uniform(-5,5), sd_delta=np.random.randint(1,10), mu_theta=np.random.uniform(-5,5), sd_theta=np.random.randint(1,10))
-                self.schedule.add(its_alive)
                     # Add the agent to the node, this adds .pos attr to agent
                 self.grid.place_agent(its_alive, node)
 
@@ -203,9 +203,9 @@ class InfoSampleModel(Model):
             list: Latest mu_theta beliefs from agents.
         """
         if self.learn_method == 'naive':
-            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.schedule.agents if a.type_of_agent == "citizen"]
+            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen"]
         else:
-            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.schedule.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
+            mu_theta_list = [a.mu_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
         return mu_theta_list
 
     def get_agent_mu_theta_delta(self):
@@ -215,7 +215,7 @@ class InfoSampleModel(Model):
         Returns:
             float: Mean absolute difference between the last two mu_theta beliefs.
         """
-        mu_theta_delta = [ abs(a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1]) for a in self.schedule.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
+        mu_theta_delta = [ abs(a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1]) for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0]
         return np.mean(mu_theta_delta)
 
     def get_agent_mu_theta_delta_rate(self):
@@ -226,10 +226,10 @@ class InfoSampleModel(Model):
             float: Mean relative change rate.
         """
         if self.learn_method == 'naive':
-            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.schedule.agents if a.type_of_agent == "citizen" and a.mu_theta_beliefs[-2] != 0.0]
+            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.agents if a.type_of_agent == "citizen" and a.mu_theta_beliefs[-2] != 0.0]
 
         else:
-            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.schedule.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.mu_theta_beliefs[-2] != 0.0]
+            mu_theta_delta_rate = [ abs((a.mu_theta_beliefs[-2] - a.mu_theta_beliefs[-1])/a.mu_theta_beliefs[-2]) for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.mu_theta_beliefs[-2] != 0.0]
             
         return np.mean(mu_theta_delta_rate)
 
@@ -240,7 +240,7 @@ class InfoSampleModel(Model):
         Returns:
             list: Latest sd_theta beliefs.
         """
-        sd_theta_list = [a.sd_theta_beliefs[-1] for a in self.schedule.agents if a.type_of_agent == "citizen"]
+        sd_theta_list = [a.sd_theta_beliefs[-1] for a in self.agents if a.type_of_agent == "citizen"]
         return sd_theta_list
 
     def get_agent_avg_sd_theta(self):
@@ -261,9 +261,9 @@ class InfoSampleModel(Model):
             list: Request counts from agents.
         """
         if self.learn_method == 'naive':
-            num_request_list = [a.num_request for a in self.schedule.agents if a.type_of_agent == "citizen" and a.info_source[0].type_of_agent == 'infoprovider']
+            num_request_list = [a.num_request for a in self.agents if a.type_of_agent == "citizen" and a.info_source[0].type_of_agent == 'infoprovider']
         else:
-            num_request_list = [a.num_request for a in self.schedule.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.info_source[0].type_of_agent == 'infoprovider']
+            num_request_list = [a.num_request for a in self.agents if a.type_of_agent == "citizen" and a.theta_or_delta == 0 and a.info_source[0].type_of_agent == 'infoprovider']
         
         return num_request_list
 
@@ -275,13 +275,13 @@ class InfoSampleModel(Model):
         """
         updated_net = nx.DiGraph()
         # Add all nodes (i.e. all agents).
-        for agent in self.schedule.agents:
-            updated_net.add_node(agent.unique_id)
+        for agent in self.agents:
+            updated_net.add_node(agent.pos)
         # Add edges from citizen to each counterpart in its info_source.
-        for agent in self.schedule.agents:
+        for agent in self.agents:
             if agent.type_of_agent == "citizen" and hasattr(agent, "info_source"):
                 for counterpart in agent.info_source:
-                    updated_net.add_edge(agent.unique_id, counterpart.unique_id)
+                    updated_net.add_edge(agent.pos, counterpart.pos)
         # Save the network structure as a model attribute.
         self.network = updated_net
 
@@ -292,36 +292,44 @@ class InfoSampleModel(Model):
           - Activate all agents.
           - Record summary statistics.
         """
-        if self.schedule.steps == 0:
-            for citizen in [a for a in self.schedule.agents if a.type_of_agent == "citizen"]:
+        # Mesa 3.x increments model.steps before entering the user-defined
+        # step body, so the first call is step 1 rather than scheduler step 0.
+        if self.steps == 1:
+            for citizen in [a for a in self.agents if a.type_of_agent == "citizen"]:
                 citizen.info_source = citizen.pick_counterpart()
             # Record the updated network structure based on current counterpart selections.
             self.update_network()
 
 
-        self.p = 1/(self.time+1)
+        self.p = 1/(self.period+1)
         self.p_pair = [1-self.p, self.p]
-        self.schedule.step()
+        # Equivalent to Mesa 2.x SimultaneousActivation: all agents execute
+        # step() first, then advance(). Agent.advance() is a no-op unless
+        # overridden by a subclass.
+        self.agents.do("step")
+        self.agents.do("advance")
 
         mu_theta_list=self.get_agent_mu_theta()
         self.agent_mu_theta_list.append(mu_theta_list)
-        if self.schedule.steps > 2:
+        if self.steps > 2:
             num_request_list=self.get_agent_num_request()
             #self.avg_agent_mu_theta_diff = self.get_agent_mu_theta_delta()
             self.avg_agent_mu_theta_diff_rate = self.get_agent_mu_theta_delta_rate()
             #self.avg_agent_sd_theta = self.get_agent_avg_sd_theta()
             #self.agent_num_request_list.append(num_request_list)
+
+        # Keep the model's substantive period counter separate from Mesa's
+        # reserved time/steps bookkeeping.
+        self.period += 1
         
     def run_model(self, print_time=True):
         while self.running:
             if print_time is True:
-                print("Running step :{}".format(self.time))
+                print("Running step :{}".format(self.period))
             
             self.step()
-            if (self.avg_agent_mu_theta_diff_rate<10**-3 or self.schedule.steps > self.max_steps) :
+            if (self.avg_agent_mu_theta_diff_rate<10**-3 or self.steps > self.max_steps) :
                 self.running=False
-            self.time += 1
-
 # ----------------------
 # Agent Classes
 # ----------------------
@@ -339,8 +347,11 @@ class InfoAgents(Agent):
         epsilon (float): Learning parameter.
         group_id (int): Group identifier based on mu_theta.
     """
-    def __init__(self, unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent='genericagent'):
-        super().__init__(unique_id, model)
+    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent='genericagent'):
+        # Mesa 3.x assigns unique_id automatically when Agent is created.
+        # Preserve the pre-Mesa-3 identifier separately for provenance.
+        super().__init__(model)
+        self.legacy_id = legacy_id
         self.mu_theta = mu_theta
         self.sd_theta = sd_theta
         self.mu_delta = mu_delta
@@ -379,8 +390,8 @@ class DisruptiveJammer(InfoAgents):
         msg_param_at_t_per_cluster (dict): Message parameters per cluster at each time step.
         expected_cluster_theta_beliefs (dict): Expected cluster theta beliefs.
     """
-    def __init__(self, unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="disruptivejammer", surveillance_ability=5):
-        super().__init__(unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
+    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="disruptivejammer", surveillance_ability=5):
+        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
         self.citizen_intel = {}
         self.surveillance_ability = self.model.model_attribute['surveil_ability']
         self.msg_param_at_t_per_cluster = {}
@@ -390,7 +401,7 @@ class DisruptiveJammer(InfoAgents):
         """
         Cluster citizen agents using KMeans to monitor their theta beliefs and assign cluster memberships.
         """
-        citizens = [a for a in self.model.schedule.agents if a.type_of_agent == 'citizen']
+        citizens = [a for a in self.model.agents if a.type_of_agent == 'citizen']
         mu_beliefs = [a.mu_theta_beliefs[0] for a in citizens]
         citizen_ids = [a.unique_id for a in citizens]
         kmeans = KMeans(n_clusters=self.surveillance_ability)
@@ -452,7 +463,7 @@ class DisruptiveJammer(InfoAgents):
         """
         Initialize message parameters and expected cluster theta beliefs for the current and next time steps.
         """
-        now = self.model.time
+        now = self.model.period
         next_time = now + 1
         centroids = self.citizen_intel['centroids']
         clusters = self.citizen_per_cl
@@ -474,7 +485,7 @@ class DisruptiveJammer(InfoAgents):
         """
         Update message parameters and expected cluster theta beliefs for the next time step based on current beliefs.
         """
-        now = self.model.time
+        now = self.model.period
         next_time = now + 1
         prior_beliefs = self.expected_cluster_theta_beliefs[now]
         current_msg_param = self.msg_param_at_t_per_cluster[now]
@@ -513,7 +524,7 @@ class DisruptiveJammer(InfoAgents):
         """
         req_id = requester.unique_id
         req_cluster = self.citizen_intel['membership'][req_id]
-        mu_theta = self.msg_param_at_t_per_cluster[self.model.time][req_cluster]['avg']
+        mu_theta = self.msg_param_at_t_per_cluster[self.model.period][req_cluster]['avg']
         sd_theta = 1
         if n_req > 0:
             return list(np.random.normal(mu_theta, sd_theta, n_req))
@@ -525,7 +536,7 @@ class DisruptiveJammer(InfoAgents):
           - Every 5 steps, re-surveil citizens and reinitialize message parameters.
           - Otherwise, tune message parameters for the next step.
         """
-        if self.model.time % 5 == 0:
+        if self.model.period % 5 == 0:
             self.surveil_citizen()
             self.init_message_param()
         else:
@@ -539,8 +550,8 @@ class InfoProvider(InfoAgents):
 
     * note that they never update their beliefs about the state of the world.
     """
-    def __init__(self, unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="infoprovider"):
-        super().__init__(unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
+    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="infoprovider"):
+        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
         self.delta = self.model.state_of_the_world - self.mu_theta
 
 class Citizen(InfoAgents):
@@ -557,8 +568,8 @@ class Citizen(InfoAgents):
         num_request_history (list): History of request counts.
         theta_or_delta (float): Indicator for learning type (theta or delta).
     """
-    def __init__(self, unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="citizen"):
-        super().__init__(unique_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
+    def __init__(self, legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent="citizen"):
+        super().__init__(legacy_id, pos, model, mu_delta, sd_delta, mu_theta, sd_theta, type_of_agent)
         self.mu_theta_beliefs = [mu_theta]
         self.sd_theta_beliefs = [sd_theta]
         # Extend delta beliefs by appending copies of the first element
