@@ -7,8 +7,8 @@ from dataclasses import asdict, dataclass
 
 VALID_NETWORK_ENVIRONMENTS = (
     "elite_only",
-    "random_peer",
-    "homophilous_peer",
+    "random_2",
+    "group_id",
     "extended",
 )
 VALID_RELIANCE_MODES = ("adaptive", "frozen")
@@ -23,9 +23,9 @@ class PaperBCondition:
     seed: int
     jammer_k: int = 1
     jammer_active: bool = True
+    local_degree: int = 2
     peer_degree: int = 2
     same_group_probability: float = 0.9
-    elite_access_probability: float = 0.10
     surveillance_interval: int = 5
 
     def __post_init__(self):
@@ -37,12 +37,10 @@ class PaperBCondition:
             raise ValueError(
                 f"reliance_mode must be one of {VALID_RELIANCE_MODES}"
             )
-        if self.peer_degree < 0:
-            raise ValueError("peer_degree must be nonnegative.")
+        if self.local_degree < 0 or self.peer_degree < 0:
+            raise ValueError("local_degree and peer_degree must be nonnegative.")
         if not 0.0 <= self.same_group_probability <= 1.0:
             raise ValueError("same_group_probability must lie in [0,1].")
-        if not 0.0 <= self.elite_access_probability <= 1.0:
-            raise ValueError("elite_access_probability must lie in [0,1].")
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -56,9 +54,9 @@ def receiver_side_conditions(
     reliance_modes: tuple[str, ...] = VALID_RELIANCE_MODES,
     jammer_k_values: tuple[int, ...] = (1,),
     include_no_jammer_counterfactual: bool = True,
+    local_degree: int = 2,
     peer_degree: int = 2,
     same_group_probability: float = 0.9,
-    elite_access_probability: float = 0.10,
 ) -> list[PaperBCondition]:
     """Generate the theory-aligned receiver-side experiment grid.
 
@@ -89,9 +87,9 @@ def receiver_side_conditions(
                                     seed=seed,
                                     jammer_k=k,
                                     jammer_active=jammer_active,
+                                    local_degree=local_degree,
                                     peer_degree=peer_degree,
                                     same_group_probability=same_group_probability,
-                                    elite_access_probability=elite_access_probability,
                                 )
                             )
     return conditions
