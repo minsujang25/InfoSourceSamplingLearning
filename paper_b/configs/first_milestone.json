@@ -14,8 +14,8 @@
     ],
     "network_environment": [
       "elite_only",
-      "random_peer",
-      "homophilous_peer",
+      "random_2",
+      "group_id",
       "extended"
     ],
     "jammer_active": [
@@ -31,11 +31,15 @@
     "note": "J=0 neutralizes adversarial content rather than deleting the Jammer node."
   },
   "network_design": {
-    "peer_degree": 2,
-    "same_group_probability": 0.9,
-    "elite_access_probability": {
-      "status": "TO_BE_FROZEN_BEFORE_PRODUCTION",
-      "diagnostic_default": 0.1
+    "local_degree": 2,
+    "extended_peer_degree": 2,
+    "group_id_same_group_probability": 0.9,
+    "mapping_status": "FROZEN",
+    "environments": {
+      "elite_only": "Each citizen has Expert and Jammer as its only two structural sources.",
+      "random_2": "Each citizen has exactly two structural sources sampled without replacement from all other nodes (citizens + Expert + Jammer).",
+      "group_id": "Each citizen has exactly two structural sources sampled from all other nodes with 0.9 same-initial-belief-group / 0.1 cross-group preference; Expert and Jammer are embedded using their fixed group IDs.",
+      "extended": "Each citizen has direct Expert and Jammer access plus exactly two random citizen peers."
     }
   },
   "jammer": {
