@@ -101,6 +101,26 @@ def load_model_module(model_root: Path):
     return module
 
 
+def enforce_deterministic_neighbor_order(module):
+    """Normalize a legacy reproducibility bug before cross-version comparison.
+
+    The public Mesa 2.4 code converted NetworkGrid neighbors to a Python set.
+    Iteration order therefore depended on object hashes / memory layout, so
+    identical NumPy seeds could generate different peer selections across
+    fresh processes. The migration comparison patches both implementations to
+    use stable network-position order. The Mesa 3.5 source contains the same
+    deterministic rule permanently.
+    """
+
+    def deterministic_get_neighbor_list(self):
+        return sorted(
+            self.model.grid.get_neighbors(self.pos, include_center=False),
+            key=lambda agent: agent.pos,
+        )
+
+    module.Citizen.get_neighbor_list = deterministic_get_neighbor_list
+
+
 def initial_beliefs(kind: str, seed: int) -> list[float]:
     rng = np.random.default_rng(seed + 10_000)
     n_citizens = N - 2
@@ -230,6 +250,7 @@ def main():
     args = parser.parse_args()
 
     module = load_model_module(args.model_root.resolve())
+    enforce_deterministic_neighbor_order(module)
     runs = []
     for scenario in SCENARIOS:
         for seed in args.seeds:
