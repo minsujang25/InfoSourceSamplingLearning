@@ -180,14 +180,13 @@ class InfoSampleModel(Model):
         def take(name, default):
             return cfg[name] if name in cfg else default
 
-        self.state_of_the_world = float(
-            take(
-                "state_of_the_world",
-                random_state_assignment(rng=self.rng)
-                if state_of_the_world is None
-                else state_of_the_world,
-            )
-        )
+        if "state_of_the_world" in cfg:
+            initial_state = cfg["state_of_the_world"]
+        elif state_of_the_world is not None:
+            initial_state = state_of_the_world
+        else:
+            initial_state = random_state_assignment(rng=self.rng)
+        self.state_of_the_world = float(initial_state)
         self.num_nodes = int(take("num_nodes", num_nodes))
         self.comparison_rule = take("comparison_rule", comparison_rule)
         self.epsilon = float(take("epsilon", epsilon))
