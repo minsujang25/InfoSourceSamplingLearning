@@ -23,7 +23,20 @@ def rmse(a, b):
         return math.inf
     if not a:
         return 0.0
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)) / len(a))
+    diffs = [paired_abs_diff(x, y) for x, y in zip(a, b)]
+    if any(math.isinf(d) for d in diffs):
+        return math.inf
+    return math.sqrt(sum(d * d for d in diffs) / len(diffs))
+
+
+def paired_abs_diff(x, y):
+    if math.isnan(x) and math.isnan(y):
+        return 0.0
+    if math.isnan(x) or math.isnan(y):
+        return math.inf
+    if math.isinf(x) or math.isinf(y):
+        return 0.0 if x == y else math.inf
+    return abs(x - y)
 
 
 def max_abs(a, b):
@@ -31,7 +44,11 @@ def max_abs(a, b):
         return math.inf
     if not a:
         return 0.0
-    return max(abs(x - y) for x, y in zip(a, b))
+    return max(paired_abs_diff(x, y) for x, y in zip(a, b))
+
+
+def contains_nonfinite(values):
+    return any(not math.isfinite(x) for x in values)
 
 
 def keyed(payload):
@@ -84,9 +101,15 @@ def main():
         final_max = max_abs(fa, fb)
 
         summary_abs = {
-            name: abs(a["summary"][name] - b["summary"][name])
+            name: paired_abs_diff(a["summary"][name], b["summary"][name])
             for name in ("mean_final", "sd_final", "mae_truth")
         }
+        nonfinite_present = (
+            contains_nonfinite(ta)
+            or contains_nonfinite(tb)
+            or any(not math.isfinite(v) for v in a["summary"].values())
+            or any(not math.isfinite(v) for v in b["summary"].values())
+        )
 
         strict = (
             all(structural.values())
@@ -108,6 +131,7 @@ def main():
             "trajectory_rmse": path_rmse,
             "final_max_abs": final_max,
             "summary_abs": summary_abs,
+            "nonfinite_present": nonfinite_present,
             "strict_pass": strict,
             "review_band_pass": review,
         }
@@ -129,6 +153,11 @@ def main():
         "strict_passes": sum(r["strict_pass"] for r in results),
         "strict_failures": [list(k) for k in strict_failures],
         "review_band_cases": [list(k) for k in review_cases],
+        "nonfinite_runs": [
+            [r["scenario_id"], r["seed"]]
+            for r in results
+            if r["nonfinite_present"]
+        ],
         "results": results,
     }
 
