@@ -26,7 +26,7 @@ conda env create -f InfoSourceSamplingLearning.yml
 conda activate InfoSourceSamplingLearning
 ```
 
-The supplied environment pins `mesa==2.4`, the version for which this implementation was developed.
+The supplied environment now targets **Python 3.12** and **Mesa 3.5.1**, the latest stable Mesa release as of September 2026. Mesa 4.0 remains a pre-release and is intentionally not used here.
 
 ## Code entry points
 
@@ -60,7 +60,29 @@ The script creates `batch_result/` and appends serialized results to `batch_resu
 
 ## Connection to the manuscript
 
-The repository provides the computational model, parallel runner, and adversarial-jamming batch definition used to support the manuscript’s agent-based analysis. It does not currently include the manuscript text, precomputed simulation outputs, figure-generation code, a tagged release, or an automated test suite. Those limits should be considered when reproducing specific manuscript results.
+The repository provides the computational model, parallel runner, and adversarial-jamming batch definition used to support the manuscript’s agent-based analysis. It does not currently include the manuscript text, precomputed simulation outputs, figure-generation code, or a tagged release. A lightweight smoke test is included to verify that the migrated Mesa 3.5 model can initialize and advance a small simulation; it is not a substantive validation of manuscript results.
+
+## Mesa 3.5 migration
+
+The current codebase has been migrated from the legacy Mesa 2.4 scheduler API to Mesa 3.5's `AgentSet` API. In particular:
+
+- `SimultaneousActivation` was replaced by `model.agents.do("step")` followed by `model.agents.do("advance")`;
+- agents are registered automatically with `model.agents`;
+- Mesa's built-in `model.steps` counter replaces `schedule.steps`;
+- Mesa now assigns agent `unique_id` values automatically, while the pre-migration identifiers are retained as `legacy_id`;
+- the model uses a separate `period` counter for the manuscript's substantive time index.
+
+See [`MIGRATION.md`](MIGRATION.md) for details and caveats.
+
+### Quick smoke test
+
+After creating the environment:
+
+```bash
+python -m scripts.smoke_test
+```
+
+This runs only a tiny configuration and should complete quickly.
 
 ## License
 
