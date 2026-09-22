@@ -101,8 +101,8 @@ def recursive_rank_probabilities(num_sources: int, epsilon: float) -> np.ndarray
     """
     if num_sources < 1:
         raise ValueError("At least one source is required.")
-    if not 0.0 <= epsilon <= 1.0:
-        raise ValueError("epsilon must lie in [0, 1].")
+    if not 0.0 <= epsilon <= 0.5:
+        raise ValueError("epsilon must lie in [0, 0.5] so rank weights remain non-increasing.")
     if num_sources == 1:
         return np.asarray([1.0], dtype=float)
 
@@ -537,6 +537,12 @@ class InfoSampleModel(Model):
                         "expected_reliance": float(
                             citizen.reliance_probabilities.get(source, 0.0)
                         ),
+                        "sampling_probability": float(
+                            citizen.sampling_probabilities.get(source, 0.0)
+                        ),
+                        "learning_target": (
+                            "credibility" if citizen.theta_or_delta == 1 else "theta"
+                        ),
                         "realized_reliance": float(
                             citizen.realized_reliance.get(source, 0.0)
                         ),
@@ -658,7 +664,9 @@ class InfoProvider(InfoAgents):
             sd_theta,
             type_of_agent,
         )
-        self.delta = model.state_of_the_world - self.mu_theta
+        # Source displacement follows the baseline-paper convention:
+        # source location minus the truth.
+        self.delta = self.mu_theta - model.state_of_the_world
 
 
 class DisruptiveJammer(InfoAgents):
@@ -893,6 +901,12 @@ class Citizen(InfoAgents):
         self.num_request: list[int] = []
 
         self.sampled_msgs: list[list[float]] = []
+        # substantive_reliance_probabilities is the theory object Lambda_t:
+        # the rank-based policy that would govern state-learning acquisition.
+        # sampling_probabilities is the policy actually used in the current
+        # round; credibility audits intentionally sample sources evenly.
+        self.substantive_reliance_probabilities: dict[InfoAgents, float] = {}
+        self.sampling_probabilities: dict[InfoAgents, float] = {}
         self.reliance_probabilities: dict[InfoAgents, float] = {}
         self.realized_reliance: dict[InfoAgents, float] = {}
 
@@ -950,19 +964,36 @@ class Citizen(InfoAgents):
         return counts.tolist(), probs.astype(float)
 
     def sample_messages(self) -> None:
-        """Sample period-t messages and record Pi_t and realized X_t."""
+        """Sample period-t messages while keeping reliance and audit policy distinct.
+
+        Lambda_t is the rank-based substantive acquisition policy implied by
+        the pre-update credibility ranking.  Credibility-audit rounds use an
+        equal diagnostic sampling policy, but they do not redefine Lambda_t.
+        X_t records the messages actually sampled in the current round.
+        """
+        behavioral_order = self._behavioral_ranking()
+        substantive_policy = recursive_rank_probabilities(
+            len(behavioral_order),
+            self.model.epsilon,
+        )
+        self.substantive_reliance_probabilities = {
+            source: float(substantive_policy[i])
+            for i, source in enumerate(behavioral_order)
+        }
+        # Backwards-facing alias used by the Paper B metrics.
+        self.reliance_probabilities = dict(
+            self.substantive_reliance_probabilities
+        )
+
         if self.theta_or_delta == 1:
             ordered_sources = list(self.info_source)
-            counts, policy = self._equal_audit_requests(ordered_sources)
+            counts, sampling_policy = self._equal_audit_requests(ordered_sources)
         else:
-            ordered_sources = self._behavioral_ranking()
-            policy = recursive_rank_probabilities(
-                len(ordered_sources),
-                self.model.epsilon,
-            )
+            ordered_sources = behavioral_order
+            sampling_policy = substantive_policy
             choices = self.model.rng.choice(
                 len(ordered_sources),
-                p=policy,
+                p=sampling_policy,
                 size=self.model.credit,
             )
             counts = [
@@ -978,11 +1009,11 @@ class Citizen(InfoAgents):
         self._sample_order = ordered_sources
         self.num_request = counts
         self.sampled_msgs = messages
-
-        self.reliance_probabilities = {
-            source: float(policy[i])
+        self.sampling_probabilities = {
+            source: float(sampling_policy[i])
             for i, source in enumerate(ordered_sources)
         }
+
         total = max(sum(counts), 1)
         self.realized_reliance = {
             source: counts[i] / total
@@ -1014,10 +1045,11 @@ class Citizen(InfoAgents):
         """Bayesian source-displacement update with dimensionally consistent SDs.
 
         Message model for source s:
-            mean(message_s) ~= theta - delta_s + noise.
+            mean(message_s) ~= theta + delta_s + noise.
 
-        Marginalizing over citizen uncertainty in theta gives an observation of
-        delta_s, z_s = mu_theta - mean(message_s), with variance equal to the
+        Marginalizing over citizen uncertainty in theta gives a belief-relative
+        observation of source displacement,
+        d_s = mean(message_s) - mu_theta, with variance equal to the
         citizen's current theta variance plus the sampling variance of the
         source-message mean.
         """
@@ -1043,7 +1075,7 @@ class Citizen(InfoAgents):
                 msgs,
                 single_message_variance=self.model.single_message_variance,
             )
-            observed_delta = prior_mu_theta - msg_mean
+            observed_delta = msg_mean - prior_mu_theta
             observation_var = prior_var_theta + msg_mean_var
 
             prior_mu_delta = float(self.mu_delta[source])
