@@ -69,7 +69,7 @@ SCENARIOS = [
         "id": "random_polarized_k1_n2_z",
         "mode": "random",
         "initial": "polarized",
-       "surveil_ability": 1,
+        "surveil_ability": 1,
         "num_max_citizen_neighbor": 2,
         "comparison_rule": "z_stat_comparison",
     },
@@ -102,8 +102,6 @@ def load_model_module(model_root: Path):
 
 
 def initial_beliefs(kind: str, seed: int) -> list[float]:
-    # Use a dedicated generator so constructing initial conditions does not
-    # consume the global RNG stream used by the model itself.
     rng = np.random.default_rng(seed + 10_000)
     n_citizens = N - 2
     if kind == "flat":
@@ -179,5 +177,76 @@ def citizen_final_by_pos(model) -> list[dict]:
     return [
         {
             "pos": int(a.pos),
-            "mu_theta": float(a.mu_theta_beliefs-BÙÝ]HØ]
-KÙÝ]WØ[YYËP¢Ð¢f÷"â6F¦Vç0¢Ð  ¦FVb'VåööæRÖöGVÆRÂ66Væ&ó¢F7BÂ6VVC¢çBÓâF7C ¢çç&æFöÒç6VVB6VVB¢6öæfrÒ'VÆEö6öæfrÖöGVÆRÂ66Væ&òÂ6VVB ¢G' ¢ÖöFVÂÒÖöGVÆRäæfõ6×ÆTÖöFVÂÖöFVÅöGG&'WFSÖ6öæfrÂ&æs×6VVB¢W6WBGTW'&÷# ¢ÖöFVÂÒÖöGVÆRäæfõ6×ÆTÖöFVÂÖöFVÅöGG&'WFSÖ6öæfr ¢ÖöFVÂç'VåöÖöFVÂ&çE÷FÖSÔfÇ6R ¢G&¦V7F÷'Ò°¢¶fÆöBf÷"â&÷uÐ¢f÷"&÷râvWFGG"ÖöFVÂÂ&vVçEö×U÷FWFöÆ7B"ÂµÒ¢Ð¢VFvW2Ò6÷'FVB¢µ¶çBRÂçBbÒf÷"RÂbâÖöFVÂææWGv÷&²æVFvW2ÒÀ¢¶WÖÆÖ&FS¢U³ÒÂU³ÒÀ¢¢fæÂÒ6F¦VåöfæÅö'÷÷2ÖöFVÂ¢fæÅö×RÒçæ'&·&÷u²&×U÷FWF%Òf÷"&÷râfæÅÒÂGGSÖfÆöB ¢&WGW&â°¢'66Væ&õöB#¢66Væ&õ²&B%ÒÀ¢'6VVB#¢6VVBÀ¢'7FW2#¢ÖöFVÅ÷7FW2ÖöFVÂÀ¢&æWGv÷&µöVFvW2#¢VFvW2À¢&¦ÖÖW%ö6ÇW7FW'2#¢6æöæ6Åö6ÇW7FW'2ÖöFVÂÀ¢'G&¦V7F÷'#¢G&¦V7F÷'À¢&fæÅö'÷÷2#¢fæÂÀ¢'7VÖÖ'#¢°¢&ÖVåöfæÂ#¢fÆöBçæÖVâfæÅö×RÀ¢'6EöfæÂ#¢fÆöBçç7FBfæÅö×RÀ¢&ÖU÷G'WF#¢fÆöBçæÖVâçæ'2fæÅö×RÀ¢ÒÀ¢Ð  ¦FVbÖâ ¢'6W"Ò&w'6Rä&wVÖVçE'6W"¢'6W"æFEö&wVÖVçB"ÒÖÖöFVÂ×&ö÷B"ÂGSÕFÂ&WV&VCÕG'VR¢'6W"æFEö&wVÖVçB"ÒÖ÷WGWB"ÂGSÕFÂ&WV&VCÕG'VR¢'6W"æFEö&wVÖVçB"Ò×6VVG2"ÂGSÖçBÂæ&w3Ò"²"ÂFVfVÇCÔDTdTÅEõ4TTE2¢&w2Ò'6W"ç'6Uö&w2 ¢ÖöGVÆRÒÆöEöÖöFVÅöÖöGVÆR&w2æÖöFVÅ÷&ö÷Bç&W6öÇfR¢'Vç2ÒµÐ¢f÷"66Væ&òâ44Tä$õ3 ¢f÷"6VVBâ&w2ç6VVG3 ¢'Vç2æVæB'VåööæRÖöGVÆRÂ66Væ&òÂ6VVB ¢ÆöBÒ°¢'66VÖ÷fW'6öâ#¢À¢&â#¢âÀ¢&Ö÷7FW2#¢Ôõ5DU2À¢'6VVG2#¢&w2ç6VVG2À¢'66Væ&÷2#¢44Tä$õ2À¢''Vç2#¢'Vç2À¢Ð¢&w2æ÷WGWBç&VçBæÖ¶F"&VçG3ÕG'VRÂW7Eöö³ÕG'VR¢&w2æ÷WGWBçw&FU÷FWB§6öâæGV×2ÆöBÂæFVçCÓ"ÂVæ6öFæsÒ'WFbÓ"¢&çBb%w&÷FR¶ÆVâ'Vç2ÒÖF6VB&6·FW7B'Vç2Fò¶&w2æ÷WGWGÒ"  ¦bõöæÖUõòÓÒ%õöÖåõò# ¢Öâ
+            "mu_theta": float(a.mu_theta_beliefs[-1]),
+            "sd_theta": float(a.sd_theta_beliefs[-1]),
+        }
+        for a in citizens
+    ]
+
+
+def run_one(module, scenario: dict, seed: int) -> dict:
+    np.random.seed(seed)
+    config = build_config(module, scenario, seed)
+
+    try:
+        model = module.InfoSampleModel(model_attribute=config, rng=seed)
+    except TypeError:
+        model = module.InfoSampleModel(model_attribute=config)
+
+    model.run_model(print_time=False)
+
+    trajectory = [
+        [float(x) for x in row]
+        for row in getattr(model, "agent_mu_theta_list", [])
+    ]
+    edges = sorted(
+        [[int(u), int(v)] for u, v in model.network.edges()],
+        key=lambda e: (e[0], e[1]),
+    )
+    final = citizen_final_by_pos(model)
+    final_mu = np.array([row["mu_theta"] for row in final], dtype=float)
+
+    return {
+        "scenario_id": scenario["id"],
+        "seed": seed,
+        "steps": model_steps(model),
+        "network_edges": edges,
+        "jammer_clusters": canonical_clusters(model),
+        "trajectory": trajectory,
+        "final_by_pos": final,
+        "summary": {
+            "mean_final": float(np.mean(final_mu)),
+            "sd_final": float(np.std(final_mu)),
+            "mae_truth": float(np.mean(np.abs(final_mu))),
+        },
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-root", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--seeds", type=int, nargs="+", default=DEFAULT_SEEDS)
+    args = parser.parse_args()
+
+    module = load_model_module(args.model_root.resolve())
+    runs = []
+    for scenario in SCENARIOS:
+        for seed in args.seeds:
+            runs.append(run_one(module, scenario, seed))
+
+    payload = {
+        "schema_version": 1,
+        "n": N,
+        "max_steps": MAX_STEPS,
+        "seeds": args.seeds,
+        "scenarios": SCENARIOS,
+        "runs": runs,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"Wrote {len(runs)} matched backtest runs to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
