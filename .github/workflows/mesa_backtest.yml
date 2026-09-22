@@ -1,4 +1,5 @@
 name: Mesa migration backtest
+# Validates legacy Mesa 2.4 against the Mesa 3.5 migration.
 
 on:
   workflow_dispatch:
