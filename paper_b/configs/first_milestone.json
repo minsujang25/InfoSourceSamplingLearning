@@ -1,33 +1,74 @@
 {
-  "design_version": 1,
-  "status": "scaffold_only",
-  "description": "First Paper B receiver-side milestone after scientific gates are cleared.",
+  "design_version": 2,
+  "status": "theory_aligned_reconstruction",
+  "description": "Receiver-side diagnostic grid before full production simulation.",
   "factors": {
-    "initial_belief_regime": ["flat", "consensus", "polarized"],
-    "reliance_mode": ["adaptive", "frozen"],
-    "network_environment": "TO_BE_MAPPED_FROM_EXTENDED_ABSTRACT_TO_IMPLEMENTATION"
+    "initial_belief_regime": [
+      "flat",
+      "consensus",
+      "polarized"
+    ],
+    "reliance_mode": [
+      "adaptive",
+      "frozen"
+    ],
+    "network_environment": [
+      "elite_only",
+      "random_2",
+      "group_id",
+      "extended"
+    ],
+    "jammer_active": [
+      true,
+      false
+    ]
   },
   "pairing": {
     "matched_seed": true,
     "same_initial_beliefs": true,
     "same_structural_network": true,
-    "same_adversarial_environment": true
+    "same_jammer_source_slot": true,
+    "note": "J=0 neutralizes adversarial content rather than deleting the Jammer node."
+  },
+  "network_design": {
+    "local_degree": 2,
+    "extended_peer_degree": 2,
+    "group_id_same_group_probability": 0.9,
+    "mapping_status": "FROZEN",
+    "environments": {
+      "elite_only": "Each citizen has Expert and Jammer as its only two structural sources.",
+      "random_2": "Each citizen has exactly two structural sources sampled without replacement from all other nodes (citizens + Expert + Jammer).",
+      "group_id": "Each citizen has exactly two structural sources sampled from all other nodes with 0.9 same-initial-belief-group / 0.1 cross-group preference; Expert and Jammer are embedded using their fixed group IDs.",
+      "extended": "Each citizen has direct Expert and Jammer access plus exactly two random citizen peers."
+    }
   },
   "jammer": {
-    "role": "fixed_stress_condition",
-    "default_k": 1,
-    "detailed_k_sweep": "secondary_robustness"
+    "parameter_name": "K",
+    "interpretation": "belief-surveillance resolution / audience-model granularity",
+    "diagnostic_k": [
+      1,
+      4
+    ],
+    "detailed_k_sweep": "secondary_stress_test"
   },
   "primary_mechanism_outputs": [
     "expert_reliance",
     "jammer_reliance",
     "peer_reliance",
-    "effective_influence_concentration",
-    "effective_homophily"
+    "structural_effective_divergence",
+    "effective_homophily",
+    "homophily_divergence"
   ],
-  "downstream_outputs": [
-    "belief_mae",
-    "belief_dispersion",
-    "fragmentation"
+  "primary_outcome": "jammer_induced_delta_mse",
+  "supporting_outcomes": [
+    "mse_truth",
+    "rmse_truth",
+    "mae_truth",
+    "squared_displacement",
+    "belief_variance"
+  ],
+  "secondary_diagnostics": [
+    "reliance_hhi",
+    "realized_flow_composition"
   ]
 }

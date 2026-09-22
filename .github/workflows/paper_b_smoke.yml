@@ -1,19 +1,27 @@
-name: Paper B pipeline smoke
+name: Paper B theory reconstruction checks
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - paper-b-pipeline
+      - paper-b-theory-reconstruction
     paths:
+      - "model/**"
       - "paper_b/**"
+      - "scripts/smoke_test.py"
+      - ".github/workflows/paper_b_smoke.yml"
+  pull_request:
+    paths:
+      - "model/**"
+      - "paper_b/**"
+      - "scripts/smoke_test.py"
       - ".github/workflows/paper_b_smoke.yml"
 
 permissions:
   contents: read
 
 jobs:
-  smoke:
+  theory-reconstruction:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,5 +44,19 @@ jobs:
             "scikit-learn==1.5.2" \
             "networkx==3.3"
 
-      - name: Run Paper B pipeline smoke test
+      - name: Run legacy-API smoke test
+        run: python -m scripts.smoke_test
+
+      - name: Run Paper B wrapper smoke test
         run: python -m paper_b.experiments.smoke_pipeline
+
+      - name: Run theory reconstruction checks
+        run: python -m paper_b.experiments.check_reconstruction
+
+      - name: Smoke-test local diagnostic runner
+        run: |
+          python -m paper_b.experiments.run_local_diagnostic \
+            --seeds 1 \
+            --n-citizens 20 \
+            --max-steps 8 \
+            --output-dir /tmp/paper_b_diagnostic
