@@ -1,102 +1,103 @@
-# Paper B Pipeline - Post-Migration Plan
+# Paper B Pipeline — Theory-Aligned Reconstruction
 
-This directory is intentionally documentation-only until the Mesa 2.4 -> 3.5 matched-seed backtest passes. The scientific revision should be a separate branch/PR from the framework migration.
+This branch reconstructs the migrated Mesa model around the frozen Social Networks Paper B theory rather than preserving legacy scientific output.
 
-## Intended architecture
-
-```text
-paper_b/
-|-- README.md
-|-- configs/
-|   |-- baseline.yaml
-|   |-- adaptive_frozen.yaml
-|   |-- redundancy_ablation.yaml
-|   `-- homophily_priors.yaml
-|-- experiments/
-|   |-- run_baseline.py
-|   |-- run_adaptive_frozen.py
-|   |-- run_redundancy_ablation.py
-|   `-- run_homophily_priors.py
-|-- analysis/
-|   |-- effective_influence.py
-|   |-- belief_outcomes.py
-|   `-- contrasts.py
-`-- figures/
-    |-- density_rasters.py
-    |-- adaptation_heatmap.py
-    `-- homophily_prior_heatmap.py
-```
-
-The shared substantive model stays under `model/`; Paper B code should configure and measure it rather than fork it into a second model.
-
-## First scientific milestone
-
-After migration validation, run:
+## Frozen model architecture
 
 ```text
-4 communication environments
-x 3 initial-belief regimes
-x 2 reliance modes (adaptive / frozen)
-x matched seeds
+structural opportunity A
+    -> credibility ranking R_t
+    -> acquisition policy Pi_t
+    -> effective reliance Lambda_t
+    -> realized information flow X_t
+    -> jammer-induced Delta MSE
 ```
 
-The goal is first to reproduce the old qualitative network-resilience patterns and isolate the incremental effect of adaptive reliance.
+The shared substantive model remains under `model/`. Paper B configuration, measurement, and experiment code live under `paper_b/`.
 
-## Treatment design
+## Reconstructed behavioral rules
 
-Adaptive and frozen reliance must use the same model class and differ through one explicit configuration switch such as:
+- Ordinary citizens communicate sincerely from their pre-update posterior:
+  `M_ji,t ~ Normal(mu_j,t, sigma_j,t^2)`.
+- Periods are synchronous: all period-t messages use the sender state at the beginning of period t; posterior states are exposed as message parameters only at t+1.
+- Theta and source-displacement/credibility learning remain separate learning targets.
+- Multi-source theta acquisition uses recursive rank-based exploration. For two sources it is exactly `(1-epsilon, epsilon)`.
+- `reliance_mode="adaptive"` lets later credibility audits change the behavioral ranking.
+- `reliance_mode="frozen"` freezes the ranking after the first credibility audit while substantive and credibility beliefs continue to update.
+- Periodic Jammer re-surveillance observes current pre-update citizen beliefs.
+- `jammer_active=False` neutralizes adversarial content while retaining the same structural Jammer source slot for matched J=0 counterfactuals.
 
-```python
-adaptive_reliance = True  # or False
+## Correctness fixes
+
+The reconstruction intentionally breaks strict legacy-output equivalence where the old implementation contradicted the theory:
+
+1. theta posterior variance is no longer stored as a standard deviation;
+2. source-displacement uncertainty is updated as a standard deviation consistently;
+3. sample-mean precision uses an observation-mean variance rather than treating the raw message SD as the likelihood SD;
+4. citizen message states are staged synchronously;
+5. Jammer re-surveillance uses current beliefs rather than `mu_theta_beliefs[0]`.
+
+No arbitrary clipping is used.
+
+## Explicit communication environments
+
+Theory-aligned runs should set `network_environment` explicitly:
+
+- `elite_only`: direct Expert + Jammer access, no citizen peers;
+- `random_peer`: random citizen peers plus localized elite access;
+- `homophilous_peer`: belief-group-homophilous citizen peers plus localized elite access;
+- `extended`: direct Expert + Jammer access plus random citizen peers.
+
+Legacy `mode` labels remain as compatibility aliases but should not be used to define the final Paper B design.
+
+Two design parameters are deliberately explicit rather than hidden:
+
+- `peer_degree`;
+- `elite_access_probability` for the sparse random/homophilous environments.
+
+Their final production values should be locked when the four accepted-abstract environments are mapped to the reconstructed model.
+
+## Main metrics
+
+Main-text mechanism metrics are intentionally parsimonious:
+
+1. Expert/Jammer/peer expected reliance shares;
+2. structural-to-effective total-variation divergence;
+3. effective same-group peer reliance and its divergence from structural homophily.
+
+Primary outcome:
+
+```text
+D_g(K) = E[MSE_T | J=1, g, K] - E[MSE_T | J=0, g]
 ```
 
-Do not create separate AdaptiveModel and FrozenModel implementations.
+MSE is the theoretical primary loss; RMSE is an interpretable presentation metric; MAE is a sensitivity check. MSE is decomposed into squared population displacement and belief variance.
 
-For each seed and structural network realization, paired conditions should share initial beliefs, network, expert/jammer environment, and random stream wherever feasible.
+HHI, realized X_t shares, weighted assortativity, and path-count diagnostics are secondary/supplementary unless later results make them necessary.
 
-## Output schema
+## Scientific checks
 
-Store simulation outputs before plotting.
+Run:
 
-Run metadata should include:
+```bash
+python -m scripts.smoke_test
+python -m paper_b.experiments.smoke_pipeline
+python -m paper_b.experiments.check_reconstruction
+```
 
-- run_id and seed;
-- network type and initial-belief condition;
-- adaptive/frozen reliance;
-- homophily and peer degree;
-- expert access and peer retransmission;
-- jammer stress condition, including K when it is varied.
+The reconstruction checks verify:
 
-Selected effective-influence checkpoints should store:
+- exact two-source nesting and recursive rank probabilities;
+- posterior-SD contraction;
+- synchronous sender-state snapshots;
+- first-audit-frozen reliance;
+- current-belief Jammer re-surveillance;
+- finite multi-period dynamics and coherent reliance shares.
 
-- ego position;
-- source/alter position;
-- source type (expert / jammer / peer);
-- structural edge indicator;
-- realized reliance weight or request share.
+## Next order
 
-Run-level summaries should include belief MAE, belief dispersion, fragmentation/polarization, expert/jammer/peer reliance, effective-influence concentration, and effective homophily/segregation.
-
-## Figure pipeline
-
-The planned main-paper visual grammar is:
-
-1. network structures;
-2. structural vs effective influence mechanism;
-3. binned belief-density raster replacing the large violin grids;
-4. adaptive-vs-frozen heatmap;
-5. homophily x prior-segregation heatmap;
-6. redundancy/retransmission ablation.
-
-Detailed K/surveillance sweeps remain secondary robustness material so Paper B retains a receiver/network-centered visual identity.
-
-## Branching rule
-
-Once the migration PR passes and is merged:
-
-1. create `paper-b-pipeline` from validated `main`;
-2. add the single adaptive/frozen switch and effective-influence outputs;
-3. run the small first milestone;
-4. only then add redundancy and controlled-homophily experiments.
-
-This keeps framework migration, model correction, and substantive extension separately auditable.
+1. Make the reconstruction checks green in CI.
+2. Audit remaining model-equation choices against the frozen theory and baseline-paper equations.
+3. Lock the exact four-environment parameterization.
+4. Run small paired J=1/J=0 and adaptive/frozen diagnostics.
+5. Only then launch the full Paper B simulation grid.
