@@ -305,6 +305,12 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 def consolidate(root: Path, manifest: dict) -> dict:
     shards = _read_shards(root)
     runs = [row for shard in shards for row in shard["runs"]]
+    belief_checkpoints = [
+        row for shard in shards for row in shard.get("belief_checkpoints", [])
+    ]
+    lambda_checkpoints = [
+        row for shard in shards for row in shard.get("lambda_checkpoints", [])
+    ]
     jammer_rows, _ = matched_contrasts(runs)
 
     index = {
@@ -390,6 +396,8 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp3_redundancy_contrasts.csv", contrasts)
     _write_csv(root / "exp3_activation_interaction.csv", activation)
     _write_csv(root / "exp3_design_audit.csv", audit_rows)
+    _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
+    _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
 
     expected_blocks = int(manifest["expected_blocks"])
     expected_runs = int(manifest["expected_runs"])
@@ -444,6 +452,8 @@ def package(root: Path, design_id: str) -> Path:
         "exp3_redundancy_contrasts.csv",
         "exp3_activation_interaction.csv",
         "exp3_design_audit.csv",
+        "belief_checkpoints.csv",
+        "lambda_checkpoints.csv",
         "exp3_gate.json",
     )
     path = root.parent / f"paper_b_exp3_{design_id}_shareable.zip"
