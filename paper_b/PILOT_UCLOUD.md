@@ -79,7 +79,7 @@ The exact design gets a deterministic design ID:
 ucloud_results/paper_b_pilot/pilot_<design_id>/
 ```
 
-Changing a design parameter changes the design ID, which prevents incompatible shards from being mixed.
+The design ID includes both the simulation parameters and a fingerprint of the scientific model/metric/runner code. Changing either the design or the reconstruction code therefore creates a new pilot directory and prevents incompatible shards from being mixed during `--resume`.
 
 ## Consolidated outputs
 
