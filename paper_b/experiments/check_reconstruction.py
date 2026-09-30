@@ -17,7 +17,11 @@ from model.InfoSourceSamplingLearning import (
     InfoSampleModel,
     recursive_rank_probabilities,
 )
-from paper_b.metrics import reliance_composition, theory_metrics
+from paper_b.metrics import (
+    effective_reliance_dynamics,
+    reliance_composition,
+    theory_metrics,
+)
 from paper_b.validation import assert_finite_state
 
 
@@ -116,6 +120,131 @@ def check_first_audit_freeze():
 
     citizen.credibility_ranked_sources = list(reversed(frozen))
     assert citizen._behavioral_ranking() == frozen
+
+
+def check_fixed_horizon_execution():
+    config = build_config(network_environment="elite_only")
+    config["max_steps"] = 8
+    config["convergence_tolerance"] = 1e9
+    config["stop_on_convergence"] = False
+
+    model = InfoSampleModel(model_attribute=config, rng=101)
+    model.run_model(print_time=False)
+
+    assert model.steps == 8
+    assert model.period == 8
+
+
+def check_jammer_objective_and_hold_rule():
+    message, kappa = DisruptiveJammer.optimal_message_mean(
+        segment_mean=1.5,
+        segment_std=1.0,
+        truth=0.0,
+        underlying_position=4.0,
+    )
+
+    def utility(m):
+        post = (1.0 - kappa) * 1.5 + kappa * m
+        return (post - 0.0) ** 2 - (m - 4.0) ** 2
+
+    assert math.isfinite(message)
+    assert utility(message) > utility(message - 1.0)
+    assert utility(message) > utility(message + 1.0)
+
+    # The documented deviation cost is centered on the Jammer's own position.
+    shifted_message, _ = DisruptiveJammer.optimal_message_mean(
+        segment_mean=1.5,
+        segment_std=1.0,
+        truth=0.0,
+        underlying_position=8.0,
+    )
+    assert shifted_message > message
+
+    model = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="elite_only",
+            jammer_k=1,
+        ),
+        rng=102,
+    )
+    jammer = model.jammer
+    assert jammer is not None
+
+    model._snapshot_message_states()
+    model.period = 0
+    first = jammer.prepare_for_period()
+    first_mean = first[0]["message_mean"]
+    assert first[0]["refresh"] is True
+
+    # Change the audience state inside the surveillance window. The strategy
+    # must remain fixed until the next scheduled refresh.
+    for citizen in model.citizens:
+        citizen.mu_theta = 10.0
+        citizen.mu_theta_beliefs[-1] = 10.0
+    model._snapshot_message_states()
+
+    model.period = 1
+    held = jammer.prepare_for_period()
+    assert held[0]["refresh"] is False
+    assert math.isclose(
+        held[0]["message_mean"],
+        first_mean,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    )
+
+    model.period = model.surveillance_interval
+    refreshed = jammer.prepare_for_period()
+    assert refreshed[0]["refresh"] is True
+    assert not math.isclose(
+        refreshed[0]["message_mean"],
+        first_mean,
+        rel_tol=0.0,
+        abs_tol=1e-8,
+    )
+
+
+def check_effective_reliance_dynamics():
+    frozen = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="extended",
+            reliance_mode="frozen",
+        ),
+        rng=103,
+    )
+    for _ in range(10):
+        frozen.step()
+
+    frozen_metrics = effective_reliance_dynamics(frozen)
+    assert math.isclose(
+        frozen_metrics["lambda_first_audit_to_terminal_tv"],
+        0.0,
+        abs_tol=1e-12,
+    )
+    assert math.isclose(
+        frozen_metrics["lambda_cumulative_turnover"],
+        0.0,
+        abs_tol=1e-12,
+    )
+    assert math.isclose(
+        frozen_metrics["lambda_top_source_changed_share"],
+        0.0,
+        abs_tol=1e-12,
+    )
+
+    adaptive = InfoSampleModel(
+        model_attribute=build_config(
+            network_environment="extended",
+            reliance_mode="adaptive",
+        ),
+        rng=104,
+    )
+    for _ in range(10):
+        adaptive.step()
+
+    adaptive_metrics = effective_reliance_dynamics(adaptive)
+    assert adaptive_metrics["lambda_first_audit_to_terminal_tv"] >= 0.0
+    assert adaptive_metrics["lambda_cumulative_turnover"] >= 0.0
 
 
 def check_jammer_resurveillance_uses_current_beliefs():
@@ -244,7 +373,10 @@ def main():
         check_theta_sd_update,
         check_synchronous_message_snapshot,
         check_first_audit_freeze,
+        check_fixed_horizon_execution,
+        check_jammer_objective_and_hold_rule,
         check_jammer_resurveillance_uses_current_beliefs,
+        check_effective_reliance_dynamics,
         check_environment_mapping,
         check_finite_multiperiod_run,
     ]
