@@ -1,0 +1,20 @@
+name: paper-b
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Pin Python 3.12 because the validated Paper B stack uses Python 3.12.
+  # This avoids NumPy 1.26.4 falling back to an unsupported/source build
+  # under Python 3.13 on Apple Silicon.
+  - python=3.12
+  - pip
+
+  # Scientific stack installed through pip so the versions exactly match
+  # the GitHub CI / reconstruction environment.
+  - pip:
+      - mesa==3.5.1
+      - numpy==1.26.4
+      - scipy==1.13.1
+      - scikit-learn==1.5.2
+      - networkx==3.3
