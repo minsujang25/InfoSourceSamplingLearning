@@ -129,6 +129,14 @@ The pilot passes only if:
 
 The runner exits non-zero if the gate fails.
 
+After a PASS, it also creates a compact upload bundle next to the pilot directory:
+
+```text
+paper_b_pilot_<design_id>_shareable.zip
+```
+
+This ZIP contains the consolidated scientific outputs but not the hundreds of resumable shard files. Keep the shard directory on UCloud for recovery, and upload the shareable ZIP for the next result audit.
+
 ## What to inspect after PASS
 
 Use the larger pilot to inspect the distribution of Delta MSE by network, prior regime, and reliance mode; adaptive-minus-frozen Delta MSE; seed-to-seed tails in Random 2 and Group ID; J=0 error in sparse networks; convergence-crossing times relative to T=200; late-horizon MSE movement using belief checkpoints; Lambda movement; and Jammer message-mean tails. These diagnostics determine the final T and the production seed count.
