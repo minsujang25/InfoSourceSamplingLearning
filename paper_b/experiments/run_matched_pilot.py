@@ -646,6 +646,7 @@ def main() -> None:
     # Consolidation and validation are part of the pilot gate.
     from paper_b.experiments.consolidate_pilot import consolidate
     from paper_b.experiments.check_pilot_output import validate_pilot
+    from paper_b.experiments.package_pilot import package_pilot
 
     consolidate(run_root)
     report = validate_pilot(run_root, write_report=True)
@@ -663,7 +664,9 @@ def main() -> None:
     if not report["pass"]:
         raise SystemExit("Pilot validation gate failed.")
 
+    bundle = package_pilot(run_root)
     print(f"Pilot outputs ready at: {run_root}")
+    print(f"Shareable result bundle: {bundle}")
 
 
 if __name__ == "__main__":
