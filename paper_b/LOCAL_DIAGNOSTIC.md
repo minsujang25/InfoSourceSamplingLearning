@@ -2,27 +2,33 @@
 
 Run all commands from the repository root.
 
-## 1. Create/activate a clean environment (recommended)
+## 1. Create/activate the validated environment
 
-On macOS/Linux:
+The repository now ships with a canonical `environment.yml` that pins Python 3.12 and
+the same scientific stack used in GitHub CI.
 
 ```bash
-python3 -m venv .venv-paper-b
-source .venv-paper-b/bin/activate
-python -m pip install --upgrade pip
-python -m pip install \
-  "mesa==3.5.1" \
-  "numpy==1.26.4" \
-  "scipy==1.13.1" \
-  "scikit-learn==1.5.2" \
-  "networkx==3.3"
+conda env create -f environment.yml
+conda activate paper-b
 ```
 
-Python 3.12 is the tested version.
+If the environment already exists:
 
-## 2. First diagnostic (recommended)
+```bash
+conda activate paper-b
+```
 
-The wrapper first runs the reconstruction checks and then the matched simulation grid:
+Quick check:
+
+```bash
+python --version
+```
+
+It should report Python 3.12.x.
+
+## 2. Reconstruction-round-2 diagnostic
+
+The wrapper first runs all reconstruction checks and then executes the matched grid:
 
 ```bash
 bash scripts/run_paper_b_diagnostic.sh
@@ -39,7 +45,10 @@ x flat initial beliefs
 = 80 runs
 ```
 
-with 100 citizens and at most 100 model periods.
+with 100 citizens and an exact fixed horizon of T=100 periods for every run.
+
+Early convergence is recorded but never used to terminate the primary diagnostic. This
+ensures every J=1/J=0 and adaptive/frozen comparison is evaluated at the same T.
 
 ## 3. Output
 
@@ -49,7 +58,7 @@ The runner creates a timestamped directory under:
 local_results/paper_b_diagnostic/
 ```
 
-and also creates one ZIP:
+and one ZIP:
 
 ```text
 paper_b_diagnostic_YYYYMMDD_HHMMSS.zip
@@ -59,36 +68,84 @@ Upload that ZIP back to ChatGPT.
 
 It contains:
 
-- `manifest.json` — exact run arguments and Git commit;
-- `runs.csv` — one row per simulation condition;
+- `manifest.json` — exact run arguments, Git commit, and design metadata;
+- `runs.csv` — one row per simulation condition, including fixed-horizon and
+  effective-reliance-dynamics metrics;
 - `jammer_contrasts.csv` — matched J=1 minus J=0 disruption, including Delta MSE;
 - `adaptive_frozen_contrasts.csv` — matched adaptive-minus-frozen disruption contrasts;
 - `terminal_beliefs.csv.gz` — citizen-level terminal beliefs;
-- `summary.json` — run counts and finite-state status.
+- `lambda_checkpoints.csv` — compact selected-period Lambda summaries;
+- `reliance_checkpoints.csv.gz` — selected-period edge-level Lambda/X records;
+- `jammer_strategy_trajectory.csv.gz` — period-by-period Jammer segment state and
+  message means;
+- `summary.json` — run counts, finite-state status, and fixed-horizon status.
 
-## 4. Optional edge-level mechanism log
+## 4. What changed after the first 80-run diagnostic
 
-To save selected-period Lambda/X edge records:
+Reconstruction round 2 makes three scientific changes:
 
-```bash
-bash scripts/run_paper_b_diagnostic.sh --save-edge-log
+1. **Fixed terminal horizon.** Every primary run executes exactly T periods.
+2. **Jammer objective.** The sender now optimizes the documented one-step disruptive
+   objective at surveillance refreshes and holds the chosen segment message mean fixed
+   until the next refresh. The undocumented within-window recurrence has been removed.
+3. **Dynamic Lambda metrics.** The output now measures change in the identity of
+   highly weighted ties after the first credibility audit, not only the static distance
+   from equal structural use.
+
+See `paper_b/JAMMER_OBJECTIVE_AUDIT.md` for the Jammer derivation.
+
+## 5. Selected-period Lambda diagnostics
+
+The default diagnostic stores checkpoints at:
+
+```text
+t = 0, 1, 5, 10, 25, 50, T
 ```
 
-This adds `reliance_checkpoints.csv.gz`.
+when those periods exist.
 
-## 5. Larger follow-up after the first ZIP is checked
+The compact output reports:
 
-Do not start here. First run the default 80-run diagnostic.
+- Expert/Jammer/peer expected reliance;
+- Lambda distance from the first post-audit effective network;
+- effective homophily;
+- total peer reliance.
 
-After it passes inspection, a useful next run is:
+The run-level output also reports:
+
+- first-audit-to-terminal Lambda TV distance;
+- mean period-to-period Lambda turnover;
+- cumulative Lambda turnover;
+- share of citizens whose top source changed;
+- mean number of top-source switches per citizen.
+
+For a correctly implemented frozen condition, these post-audit Lambda-dynamics measures
+should be zero.
+
+## 6. Jammer strategy diagnostics
+
+`jammer_strategy_trajectory.csv.gz` records for each active-Jammer segment and period:
+
+- surveillance refresh indicator;
+- observed segment mean and dispersion;
+- Gaussian response gain;
+- optimized message mean;
+- cluster size.
+
+This is the first file to inspect if a run produces unusually large disruption.
+
+## 7. Larger follow-up
+
+Do not scale up until the new default 80-run diagnostic has been inspected.
+
+After that gate passes, a useful next local/UCloud pilot is:
 
 ```bash
 bash scripts/run_paper_b_diagnostic.sh \
   --seeds 20 \
   --initial-regimes flat,consensus,polarized \
   --n-citizens 100 \
-  --max-steps 200 \
-  --save-edge-log
+  --max-steps 200
 ```
 
 ## Useful options
@@ -104,13 +161,14 @@ bash scripts/run_paper_b_diagnostic.sh \
 --epsilon 0.05
 --credit 20
 --comparison-rule delta_comparison
---save-edge-log
+--no-edge-log
 --output-dir local_results/paper_b_diagnostic
 ```
 
 ## Pairing rule
 
-Within each seed and initial-belief regime, the same initial belief vector and the same model seed are reused across:
+Within each seed and initial-belief regime, the same initial belief vector and the same
+model seed are reused across:
 
 ```text
 J=1 / J=0
@@ -119,17 +177,13 @@ adaptive / frozen
 
 for each structural environment.
 
-The run therefore supports the primary disruption estimand
+The primary matched estimand is therefore evaluated at the common horizon T:
 
 ```text
-D_g(K) = MSE(J=1,g,K) - MSE(J=0,g)
+D_g(K; T) = MSE_T(J=1,g,K) - MSE_T(J=0,g).
 ```
 
-and the adaptive-vs-frozen contrast in D_g(K).
-
-## Important
-
-The four production environment names are now frozen as:
+## Production environment names
 
 ```text
 elite_only
@@ -138,4 +192,5 @@ group_id
 extended
 ```
 
-Do not use the old `mode=random` or `mode=group_id_matching` paths for manuscript simulations; those are retained only for legacy auditing.
+Do not use the old `mode=random` or `mode=group_id_matching` paths for manuscript
+simulations; those remain only for legacy auditing.
