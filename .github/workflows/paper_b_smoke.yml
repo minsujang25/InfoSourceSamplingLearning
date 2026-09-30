@@ -60,3 +60,14 @@ jobs:
             --n-citizens 20 \
             --max-steps 8 \
             --output-dir /tmp/paper_b_diagnostic
+
+      - name: Smoke-test matched pilot runner
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 1 \
+            --seed-start 1001 \
+            --initial-regimes flat \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 2 \
+            --output-dir /tmp/paper_b_pilot_smoke
