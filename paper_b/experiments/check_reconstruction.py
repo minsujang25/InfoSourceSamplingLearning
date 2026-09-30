@@ -404,7 +404,6 @@ def check_exp4_factorial_design():
         seed=503,
         n_citizens=n_citizens,
         group_ids=group_ids,
-        expert_access_share=0.10,
         low_homophily=0.50,
         high_homophily=0.90,
     )
