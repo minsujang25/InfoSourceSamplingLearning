@@ -181,6 +181,20 @@ def run_block(task: dict) -> dict:
     if _elite_signature(blueprint["low"]) != _elite_signature(blueprint["high"]):
         raise RuntimeError(f"{block_id}: elite access changed with homophily.")
 
+    for homophily in HOMOPHILY_LEVELS:
+        for ego, sources in blueprint[homophily].items():
+            elites = sorted(int(source) for source in sources if int(source) < 2)
+            peers = [int(source) for source in sources if int(source) >= 2]
+            if elites != [EXPERT_POS, JAMMER_POS]:
+                raise RuntimeError(
+                    f"{block_id}: asymmetric elite access for ego {ego}: {elites}."
+                )
+            if len(peers) != int(task["peer_degree"]):
+                raise RuntimeError(
+                    f"{block_id}: peer-degree mismatch for ego {ego}: "
+                    f"{len(peers)}."
+                )
+
     h_low = structural_peer_homophily(
         blueprint["low"],
         group_ids=group_ids,
@@ -355,6 +369,9 @@ def consolidate(root: Path, manifest: dict) -> dict:
     lambda_checkpoints = [
         row for shard in shards for row in shard.get("lambda_checkpoints", [])
     ]
+    jammer_strategy = [
+        row for shard in shards for row in shard.get("jammer_strategy", [])
+    ]
 
     # Build D = MSE(J1)-MSE(J0) within each H x S cell.
     by_cell = {}
@@ -449,6 +466,7 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp4_design_audit.csv", audits)
     _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
     _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
+    _write_csv(root / "jammer_strategy.csv", jammer_strategy)
 
     expected_blocks = int(manifest["expected_blocks"])
     expected_runs = int(manifest["expected_runs"])
@@ -466,6 +484,16 @@ def consolidate(root: Path, manifest: dict) -> dict:
         float(a["prior_segregation_high"])
         > float(a["prior_segregation_low"]) + 3.0
         for a in audits
+    )
+
+    max_mse = max((float(r["mse_truth"]) for r in runs), default=float("nan"))
+    max_abs_jammer_message = max(
+        (abs(float(r["message_mean"])) for r in jammer_strategy),
+        default=float("nan"),
+    )
+    max_jammer_response_gain = max(
+        (float(r["response_gain"]) for r in jammer_strategy),
+        default=float("nan"),
     )
 
     report = {
@@ -489,6 +517,9 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "all_runs_fixed_horizon": horizon,
         "homophily_manipulation_gate": h_gate,
         "segregation_manipulation_gate": s_gate,
+        "max_terminal_mse": max_mse,
+        "max_abs_jammer_message_mean": max_abs_jammer_message,
+        "max_jammer_response_gain": max_jammer_response_gain,
     }
     (root / "exp4_gate.json").write_text(
         json.dumps(report, indent=2, sort_keys=True),
@@ -508,6 +539,7 @@ def package(root: Path, design_id: str) -> Path:
         "exp4_design_audit.csv",
         "belief_checkpoints.csv",
         "lambda_checkpoints.csv",
+        "jammer_strategy.csv",
         "exp4_gate.json",
     )
     path = root.parent / f"paper_b_exp4_{design_id}_shareable.zip"
@@ -526,7 +558,7 @@ def main() -> None:
         raise ValueError("--workers must be positive.")
 
     design = {
-        "design_version": 1,
+        "design_version": 2,
         "experiment": "IV_homophily_x_prior_segregation",
         "scientific_code_fingerprint": scientific_code_fingerprint(),
         "software_versions": software_versions(),
