@@ -9,12 +9,16 @@ on:
       - "model/**"
       - "paper_b/**"
       - "scripts/smoke_test.py"
+      - "scripts/run_paper_b_pilot_ucloud.sh"
+      - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
   pull_request:
     paths:
       - "model/**"
       - "paper_b/**"
       - "scripts/smoke_test.py"
+      - "scripts/run_paper_b_pilot_ucloud.sh"
+      - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
 
 permissions:
