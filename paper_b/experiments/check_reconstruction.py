@@ -342,7 +342,6 @@ def check_explicit_matched_topology_and_fixed_groups():
         seed=501,
         n_citizens=n_citizens,
         group_ids=group_ids,
-        expert_access_share=0.10,
     )
     mu_theta = exp4_initial_beliefs(
         seed=501,
@@ -372,7 +371,6 @@ def check_exp3_redundancy_design():
     blueprint = exp3_redundancy_source_maps(
         seed=502,
         n_citizens=20,
-        expert_access_share=0.10,
     )
     gateways = set(blueprint["expert_gateways"])
     low = two_step_expert_route_count(
@@ -425,6 +423,7 @@ def check_exp4_factorial_design():
         assert [x for x in blueprint["low"][ego] if x < 2] == [
             x for x in blueprint["high"][ego] if x < 2
         ]
+        assert [x for x in blueprint["low"][ego] if x < 2] == [0, 1]
         assert sum(x >= 2 for x in blueprint["low"][ego]) == 2
         assert sum(x >= 2 for x in blueprint["high"][ego]) == 2
 
