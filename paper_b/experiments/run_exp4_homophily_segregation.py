@@ -65,7 +65,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k", type=int, default=1)
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--credit", type=int, default=20)
-    parser.add_argument("--expert-access-share", type=float, default=0.10)
     parser.add_argument("--peer-degree", type=int, default=2)
     parser.add_argument("--low-homophily", type=float, default=0.50)
     parser.add_argument("--high-homophily", type=float, default=0.90)
@@ -175,7 +174,6 @@ def run_block(task: dict) -> dict:
         n_citizens=n_citizens,
         group_ids=group_ids,
         peer_degree=int(task["peer_degree"]),
-        expert_access_share=float(task["expert_access_share"]),
         low_homophily=float(task["low_homophily"]),
         high_homophily=float(task["high_homophily"]),
     )
@@ -538,7 +536,7 @@ def main() -> None:
         "K": args.k,
         "epsilon": args.epsilon,
         "credit": args.credit,
-        "expert_access_share": args.expert_access_share,
+        "elite_access_mode": "universal_expert_and_jammer",
         "peer_degree": args.peer_degree,
         "low_homophily": args.low_homophily,
         "high_homophily": args.high_homophily,
@@ -598,7 +596,6 @@ def main() -> None:
                 "k": args.k,
                 "epsilon": args.epsilon,
                 "credit": args.credit,
-                "expert_access_share": args.expert_access_share,
                 "peer_degree": args.peer_degree,
                 "low_homophily": args.low_homophily,
                 "high_homophily": args.high_homophily,
