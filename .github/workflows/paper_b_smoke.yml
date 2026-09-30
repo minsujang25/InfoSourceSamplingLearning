@@ -93,3 +93,24 @@ jobs:
             --output-dir /tmp/paper_b_t400_smoke
           test -n "$(find /tmp/paper_b_t400_smoke -name horizon_sensitivity.csv -size +0c -print -quit)"
           test -n "$(find /tmp/paper_b_t400_smoke -name adaptive_frozen_horizon_sensitivity.csv -size +0c -print -quit)"
+
+      - name: Smoke-test Experiment III matched redundancy
+        run: |
+          python -m paper_b.experiments.run_exp3_redundancy \
+            --seeds 1 \
+            --seed-start 2001 \
+            --initial-regimes flat \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 2 \
+            --output-dir /tmp/paper_b_exp3_smoke
+
+      - name: Smoke-test Experiment IV factorial design
+        run: |
+          python -m paper_b.experiments.run_exp4_homophily_segregation \
+            --seeds 1 \
+            --seed-start 3001 \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 1 \
+            --output-dir /tmp/paper_b_exp4_smoke
