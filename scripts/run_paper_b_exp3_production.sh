@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKERS="${PAPER_B_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+OUTPUT_DIR="${PAPER_B_OUTPUT_DIR:-production_results/paper_b_exp3_redundancy}"
+
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+
+if ! [[ "${WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: PAPER_B_WORKERS must be a positive integer." >&2
+  exit 2
+fi
+
+python -m paper_b.experiments.check_reconstruction
+
+python -m paper_b.experiments.run_exp3_redundancy \
+  --seeds 500 \
+  --seed-start 2001 \
+  --initial-regimes flat \
+  --n-citizens 100 \
+  --horizon 200 \
+  --workers "${WORKERS}" \
+  --k 1 \
+  --epsilon 0.05 \
+  --credit 20 \
+  --expert-access-share 0.10 \
+  --peer-degree 2 \
+  --surveillance-interval 5 \
+  --output-dir "${OUTPUT_DIR}" \
+  --resume \
+  "$@"
