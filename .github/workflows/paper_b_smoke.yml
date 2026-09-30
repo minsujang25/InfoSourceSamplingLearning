@@ -118,3 +118,24 @@ jobs:
             --horizon 8 \
             --workers 1 \
             --output-dir /tmp/paper_b_exp4_smoke
+
+      - name: Regression-test prior Experiment IV runaway seeds
+        run: |
+          python -m paper_b.experiments.run_exp4_homophily_segregation \
+            --seeds 3009,3081 \
+            --n-citizens 100 \
+            --horizon 200 \
+            --workers 2 \
+            --output-dir /tmp/paper_b_exp4_regression
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(Path("/tmp/paper_b_exp4_regression").glob("exp4_*/exp4_gate.json"))
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["pass"] is True
+          assert gate["max_terminal_mse"] < 1_000_000
+          assert gate["max_abs_jammer_message_mean"] < 1_000_000
+          PY
