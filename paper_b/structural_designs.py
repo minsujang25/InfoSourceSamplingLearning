@@ -306,16 +306,19 @@ def exp4_homophily_source_maps(
     n_citizens: int,
     group_ids: dict[int, int] | None = None,
     peer_degree: int = 2,
-    expert_access_share: float = 0.10,
     low_homophily: float = 0.50,
     high_homophily: float = 0.90,
 ) -> dict:
-    """Generate paired low/high homophily structures with fixed elite access.
+    """Generate paired low/high homophily structures with universal elite access.
 
-    Expert gateways and universal Jammer access are identical across homophily
-    conditions. Only the citizen-peer mixing rule changes. Common random draws
-    are used for pool choice and candidate rankings, making low/high homophily
-    a paired structural counterfactual.
+    Experiment IV is a clean manipulation of citizen-peer mixing and prior
+    segregation. Every citizen therefore has the same two elite opportunities
+    (Expert and Jammer) plus exactly peer_degree citizen peers in every
+    factorial cell. This avoids the asymmetric topology in which the Jammer
+    was universal but the Expert was available only to a small subset.
+
+    Low/high homophily use common random draws and common candidate rankings,
+    making them paired structural counterfactuals.
     """
     if not (0.0 <= low_homophily <= high_homophily <= 1.0):
         raise ValueError("Require 0 <= low_homophily <= high_homophily <= 1.")
@@ -331,14 +334,10 @@ def exp4_homophily_source_maps(
     else:
         group_ids = {int(k): int(v) for k, v in group_ids.items()}
 
-    gateways = set(
-        select_expert_gateways(
-            seed=seed,
-            n_citizens=n_citizens,
-            expert_access_share=expert_access_share,
-            min_count=1,
-        )
-    )
+    # Both elite sources are universal in Experiment IV. This matches the
+    # extended-network baseline and makes peer homophily the only structural
+    # quantity manipulated by the H treatment.
+    gateways = set(positions)
 
     maps = {}
     for label, probability in (
@@ -366,7 +365,9 @@ def exp4_homophily_source_maps(
         "expert_gateways": tuple(sorted(gateways)),
         "jammer_universal": True,
         "peer_degree": peer_degree,
-        "expert_access_share_realized": len(gateways) / len(positions),
+        "expert_access_share_realized": 1.0,
+        "jammer_access_share_realized": 1.0,
+        "elite_access_mode": "universal_expert_and_jammer",
         "low_homophily_probability": float(low_homophily),
         "high_homophily_probability": float(high_homophily),
         **maps,
