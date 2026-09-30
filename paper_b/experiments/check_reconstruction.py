@@ -23,6 +23,15 @@ from paper_b.metrics import (
     theory_metrics,
 )
 from paper_b.experiments.consolidate_pilot import _horizon_sensitivity_rows
+from paper_b.structural_designs import (
+    balanced_fixed_group_ids,
+    exp3_redundancy_source_maps,
+    exp4_homophily_source_maps,
+    exp4_initial_beliefs,
+    realized_prior_segregation,
+    structural_peer_homophily,
+    two_step_expert_route_count,
+)
 from paper_b.validation import assert_finite_state
 
 
@@ -323,6 +332,125 @@ def check_jammer_resurveillance_uses_current_beliefs():
     assert math.isclose(second, 10.0, abs_tol=1e-8)
 
 
+def check_explicit_matched_topology_and_fixed_groups():
+    n_citizens = 20
+    group_ids = balanced_fixed_group_ids(
+        seed=501,
+        n_citizens=n_citizens,
+    )
+    blueprint = exp4_homophily_source_maps(
+        seed=501,
+        n_citizens=n_citizens,
+        group_ids=group_ids,
+        expert_access_share=0.10,
+    )
+    mu_theta = exp4_initial_beliefs(
+        seed=501,
+        n_citizens=n_citizens,
+        group_ids=group_ids,
+        segregation="low",
+    )
+
+    config = build_config(
+        network_environment="extended",
+        n=n_citizens + 2,
+    )
+    config["mu_theta"] = mu_theta
+    config["fixed_group_ids"] = group_ids
+    config["structural_source_map"] = blueprint["low"]
+    config["network_environment"] = "exp4_custom_low"
+
+    model = InfoSampleModel(model_attribute=config, rng=501)
+    for citizen in model.citizens:
+        assert citizen.group_id == group_ids[citizen.pos]
+        observed = sorted(source.pos for source in citizen.info_source)
+        expected = sorted(blueprint["low"][citizen.pos])
+        assert observed == expected
+
+
+def check_exp3_redundancy_design():
+    blueprint = exp3_redundancy_source_maps(
+        seed=502,
+        n_citizens=20,
+        expert_access_share=0.10,
+    )
+    gateways = set(blueprint["expert_gateways"])
+    low = two_step_expert_route_count(
+        blueprint["low"],
+        expert_gateways=gateways,
+    )
+    high = two_step_expert_route_count(
+        blueprint["high"],
+        expert_gateways=gateways,
+    )
+
+    for ego in low:
+        low_elites = [x for x in blueprint["low"][ego] if x < 2]
+        high_elites = [x for x in blueprint["high"][ego] if x < 2]
+        assert low_elites == high_elites
+        assert sum(x >= 2 for x in blueprint["low"][ego]) == 2
+        assert sum(x >= 2 for x in blueprint["high"][ego]) == 2
+
+        if ego not in gateways:
+            assert low[ego] == 1
+            assert high[ego] == 2
+
+
+def check_exp4_factorial_design():
+    n_citizens = 40
+    group_ids = balanced_fixed_group_ids(
+        seed=503,
+        n_citizens=n_citizens,
+    )
+    blueprint = exp4_homophily_source_maps(
+        seed=503,
+        n_citizens=n_citizens,
+        group_ids=group_ids,
+        expert_access_share=0.10,
+        low_homophily=0.50,
+        high_homophily=0.90,
+    )
+
+    h_low = structural_peer_homophily(
+        blueprint["low"],
+        group_ids=group_ids,
+    )
+    h_high = structural_peer_homophily(
+        blueprint["high"],
+        group_ids=group_ids,
+    )
+    assert h_high > h_low + 0.20
+
+    for ego in blueprint["low"]:
+        assert [x for x in blueprint["low"][ego] if x < 2] == [
+            x for x in blueprint["high"][ego] if x < 2
+        ]
+        assert sum(x >= 2 for x in blueprint["low"][ego]) == 2
+        assert sum(x >= 2 for x in blueprint["high"][ego]) == 2
+
+    low_prior = exp4_initial_beliefs(
+        seed=503,
+        n_citizens=n_citizens,
+        group_ids=group_ids,
+        segregation="low",
+    )
+    high_prior = exp4_initial_beliefs(
+        seed=503,
+        n_citizens=n_citizens,
+        group_ids=group_ids,
+        segregation="high",
+    )
+    s_low = realized_prior_segregation(
+        low_prior,
+        group_ids=group_ids,
+    )
+    s_high = realized_prior_segregation(
+        high_prior,
+        group_ids=group_ids,
+    )
+    assert s_high > s_low + 3.0
+
+
 def check_environment_mapping():
     # Isolated: universal access to exactly the two elites.
     isolated = InfoSampleModel(
@@ -427,6 +555,9 @@ def main():
         check_jammer_resurveillance_uses_current_beliefs,
         check_horizon_sensitivity_contrasts,
         check_effective_reliance_dynamics,
+        check_explicit_matched_topology_and_fixed_groups,
+        check_exp3_redundancy_design,
+        check_exp4_factorial_design,
         check_environment_mapping,
         check_finite_multiperiod_run,
     ]
