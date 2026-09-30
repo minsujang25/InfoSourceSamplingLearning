@@ -47,6 +47,7 @@ from model.InfoSourceSamplingLearning import (
 )
 from paper_b.metrics import (
     realized_flow_composition,
+    reliance_checkpoint_metrics,
     reliance_hhi,
     theory_metrics,
 )
@@ -127,11 +128,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--save-edge-log",
+        dest="save_edge_log",
         action="store_true",
+        default=True,
         help=(
-            "Save Lambda/X edge records at periods 0,1,5,10 and final. "
-            "Useful for mechanism inspection; off by default for speed/size."
+            "Save selected-period Lambda/X edge records. This is on by "
+            "default for the reconstruction diagnostic."
         ),
+    )
+    parser.add_argument(
+        "--no-edge-log",
+        dest="save_edge_log",
+        action="store_false",
+        help="Skip edge-level Lambda/X checkpoint output.",
     )
     parser.add_argument(
         "--progress-every",
@@ -233,6 +242,7 @@ def base_model_config(
         "counterpart_pick_mechanism": "equal",
         "surveil_ability": k,
         "surveillance_interval": surveillance_interval,
+        "stop_on_convergence": False,
         "local_degree": 2,
         "peer_degree": 2,
         "same_group_probability": 0.9,
@@ -366,6 +376,12 @@ def matched_contrasts(run_rows: list[dict]) -> tuple[list[dict], list[dict]]:
         j0 = by_key.get((seed, regime, env, reliance, False, k))
         if j0 is None:
             continue
+        if j1["steps_run"] != j0["steps_run"]:
+            raise RuntimeError(
+                "Matched J=1/J=0 pair has unequal horizons: "
+                f"{env}/{reliance}/seed={seed}: "
+                f"{j1['steps_run']} vs {j0['steps_run']}"
+            )
         jammer_contrasts.append(
             {
                 "seed": seed,
@@ -435,7 +451,11 @@ def checkpoint_periods(model: InfoSampleModel) -> set[int]:
     if not model.reliance_history:
         return set()
     last = len(model.reliance_history) - 1
-    return {p for p in (0, 1, 5, 10, last) if 0 <= p <= last}
+    return {
+        p
+        for p in (0, 1, 5, 10, 25, 50, last)
+        if 0 <= p <= last
+    }
 
 
 def run_one(
@@ -448,7 +468,7 @@ def run_one(
     jammer_active: bool,
     k: int,
     save_edge_log: bool,
-) -> tuple[dict, list[dict], list[dict]]:
+) -> tuple[dict, list[dict], list[dict], list[dict], list[dict]]:
     cfg = dict(config)
     cfg.update(
         {
@@ -456,13 +476,16 @@ def run_one(
             "reliance_mode": reliance_mode,
             "jammer_active": jammer_active,
             "surveil_ability": k,
+            "stop_on_convergence": False,
         }
     )
 
     model = InfoSampleModel(model_attribute=cfg, rng=seed)
     topo = topology_summary(model)
 
-    while model.running:
+    # Primary Paper B contrasts are evaluated at a common terminal horizon T.
+    # Convergence is recorded, never used to stop a diagnostic/production run.
+    for _ in range(model.max_steps):
         model.step()
         assert_finite_state(
             model,
@@ -471,14 +494,13 @@ def run_one(
                 f"J{int(jammer_active)}/seed={seed}"
             ),
         )
-        if model.steps >= model.max_steps:
-            model.running = False
-        elif (
-            model.steps >= 3
-            and math.isfinite(model.avg_agent_mu_theta_diff_rate)
-            and model.avg_agent_mu_theta_diff_rate < model.convergence_tolerance
-        ):
-            model.running = False
+    model.running = False
+
+    if model.steps != model.max_steps:
+        raise RuntimeError(
+            f"Fixed-horizon violation: expected {model.max_steps} steps, "
+            f"observed {model.steps}."
+        )
 
     metrics = theory_metrics(model)
     metrics.update(realized_flow_composition(model))
@@ -492,7 +514,10 @@ def run_one(
         "jammer_active": jammer_active,
         "K": k,
         "steps_run": int(model.steps),
-        "converged_before_max": bool(model.steps < model.max_steps),
+        "terminal_horizon_T": int(model.max_steps),
+        "first_convergence_period": model.first_convergence_period,
+        "converged_by_T": model.first_convergence_period is not None,
+        "final_relative_theta_change": float(model.avg_agent_mu_theta_diff_rate),
         **topo,
         **metrics,
     }
@@ -514,8 +539,20 @@ def run_one(
     ]
 
     edge_rows = []
-    if save_edge_log:
-        for period in sorted(checkpoint_periods(model)):
+    lambda_rows = []
+    for period in sorted(checkpoint_periods(model)):
+        lambda_rows.append(
+            {
+                "seed": seed,
+                "initial_regime": regime,
+                "network_environment": environment,
+                "reliance_mode": reliance_mode,
+                "jammer_active": jammer_active,
+                "K": k,
+                **reliance_checkpoint_metrics(model, period),
+            }
+        )
+        if save_edge_log:
             for record in model.reliance_history[period]:
                 edge_rows.append(
                     {
@@ -529,7 +566,20 @@ def run_one(
                     }
                 )
 
-    return row, belief_rows, edge_rows
+    jammer_rows = [
+        {
+            "seed": seed,
+            "initial_regime": regime,
+            "network_environment": environment,
+            "reliance_mode": reliance_mode,
+            "jammer_active": jammer_active,
+            "K": k,
+            **record,
+        }
+        for record in model.jammer_strategy_history
+    ]
+
+    return row, belief_rows, edge_rows, lambda_rows, jammer_rows
 
 
 def main() -> None:
@@ -594,6 +644,8 @@ def main() -> None:
     run_rows: list[dict] = []
     belief_rows: list[dict] = []
     edge_rows: list[dict] = []
+    lambda_rows: list[dict] = []
+    jammer_strategy_rows: list[dict] = []
 
     completed = 0
     for regime in regimes:
@@ -616,7 +668,7 @@ def main() -> None:
             for environment in NETWORK_ENVIRONMENTS:
                 for reliance_mode in RELIANCE_MODES:
                     for jammer_active in JAMMER_STATES:
-                        row, beliefs, edges = run_one(
+                        row, beliefs, edges, lambda_checkpoints, jammer_strategy = run_one(
                             config=base,
                             seed=seed,
                             regime=regime,
@@ -629,6 +681,8 @@ def main() -> None:
                         run_rows.append(row)
                         belief_rows.extend(beliefs)
                         edge_rows.extend(edges)
+                        lambda_rows.extend(lambda_checkpoints)
+                        jammer_strategy_rows.extend(jammer_strategy)
                         completed += 1
 
                         if completed % max(args.progress_every, 1) == 0:
@@ -645,6 +699,11 @@ def main() -> None:
     write_csv(run_dir / "jammer_contrasts.csv", jammer_rows)
     write_csv(run_dir / "adaptive_frozen_contrasts.csv", adaptive_frozen_rows)
     write_gzip_csv(run_dir / "terminal_beliefs.csv.gz", belief_rows)
+    write_csv(run_dir / "lambda_checkpoints.csv", lambda_rows)
+    write_gzip_csv(
+        run_dir / "jammer_strategy_trajectory.csv.gz",
+        jammer_strategy_rows,
+    )
     if args.save_edge_log:
         write_gzip_csv(run_dir / "reliance_checkpoints.csv.gz", edge_rows)
 
@@ -653,12 +712,17 @@ def main() -> None:
         "n_jammer_contrasts": len(jammer_rows),
         "n_adaptive_frozen_contrasts": len(adaptive_frozen_rows),
         "all_runs_finite": all(r["n_nonfinite"] == 0 for r in run_rows),
+        "all_runs_fixed_horizon": all(
+            r["steps_run"] == r["terminal_horizon_T"] for r in run_rows
+        ),
         "output_files": [
             "manifest.json",
             "runs.csv",
             "jammer_contrasts.csv",
             "adaptive_frozen_contrasts.csv",
             "terminal_beliefs.csv.gz",
+            "lambda_checkpoints.csv",
+            "jammer_strategy_trajectory.csv.gz",
         ] + (["reliance_checkpoints.csv.gz"] if args.save_edge_log else []),
     }
     (run_dir / "summary.json").write_text(
@@ -676,6 +740,10 @@ def main() -> None:
     print("Diagnostic complete.")
     print(f"Runs: {len(run_rows)}")
     print(f"Finite-state check: {'PASS' if summary['all_runs_finite'] else 'FAIL'}")
+    print(
+        "Fixed-horizon check: "
+        f"{'PASS' if summary['all_runs_fixed_horizon'] else 'FAIL'}"
+    )
     print(f"Upload this file back to ChatGPT:")
     print(f"  {zip_path}")
 
