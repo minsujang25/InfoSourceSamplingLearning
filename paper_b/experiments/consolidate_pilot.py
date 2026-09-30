@@ -76,6 +76,7 @@ def consolidate(run_root: str | Path) -> dict:
     runs = []
     beliefs = []
     lambdas = []
+    belief_checkpoints = []
     jammer = []
     edges = []
     blocks = []
@@ -84,6 +85,7 @@ def consolidate(run_root: str | Path) -> dict:
         runs.extend(payload.get("runs", []))
         beliefs.extend(payload.get("terminal_beliefs", []))
         lambdas.extend(payload.get("lambda_checkpoints", []))
+        belief_checkpoints.extend(payload.get("belief_checkpoints", []))
         jammer.extend(payload.get("jammer_strategy", []))
         edges.extend(payload.get("reliance_edges", []))
         blocks.append(
@@ -108,6 +110,7 @@ def consolidate(run_root: str | Path) -> dict:
     _write_csv(run_root / "adaptive_frozen_contrasts.csv", adaptive_frozen)
     _write_gzip_csv(run_root / "terminal_beliefs.csv.gz", beliefs)
     _write_csv(run_root / "lambda_checkpoints.csv", lambdas)
+    _write_csv(run_root / "belief_checkpoints.csv", belief_checkpoints)
     _write_gzip_csv(run_root / "jammer_strategy_trajectory.csv.gz", jammer)
     if edges:
         _write_gzip_csv(run_root / "reliance_checkpoints.csv.gz", edges)
@@ -134,6 +137,7 @@ def consolidate(run_root: str | Path) -> dict:
         "observed_runs": len(runs),
         "n_terminal_belief_rows": len(beliefs),
         "n_lambda_checkpoint_rows": len(lambdas),
+        "n_belief_checkpoint_rows": len(belief_checkpoints),
         "n_jammer_strategy_rows": len(jammer),
         "n_edge_checkpoint_rows": len(edges),
         "n_jammer_contrasts": len(jammer_contrasts),
@@ -159,6 +163,7 @@ def consolidate(run_root: str | Path) -> dict:
             "adaptive_frozen_contrasts.csv",
             "terminal_beliefs.csv.gz",
             "lambda_checkpoints.csv",
+            "belief_checkpoints.csv",
             "jammer_strategy_trajectory.csv.gz",
         ] + (["reliance_checkpoints.csv.gz"] if edges else []),
     }
