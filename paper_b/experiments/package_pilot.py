@@ -20,6 +20,8 @@ BUNDLE_FILES = (
     "terminal_beliefs.csv.gz",
     "lambda_checkpoints.csv",
     "belief_checkpoints.csv",
+    "horizon_sensitivity.csv",
+    "adaptive_frozen_horizon_sensitivity.csv",
     "jammer_strategy_trajectory.csv.gz",
     "reliance_checkpoints.csv.gz",
     "pilot_summary.json",
