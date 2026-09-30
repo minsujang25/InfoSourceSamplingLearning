@@ -31,10 +31,10 @@ For Experiments III and IV, the Jammer structural slot is universal. This is an
 intentional isolation device: adversarial opportunity is held constant while
 the experiment manipulates corrective-route redundancy or peer homophily.
 
-Direct Expert access is localized to an exact seed-specific gateway subset.
-The default share is 0.10, matching the model's existing
-`elite_access_probability` default. This is a design parameter, not an
-empirical estimate.
+Experiment III localizes elite access to study corrective-route redundancy.
+Experiment IV instead gives every citizen both elite sources (Expert and
+Jammer), so peer homophily is the only structural quantity manipulated in that
+factorial.
 
 Peer degree is fixed at two.
 
@@ -157,14 +157,18 @@ The labels do not change when prior segregation changes.
 
 ### Fixed elite access
 
-The same exact Expert gateway subset is reused in every H x S cell.
+Every citizen has direct structural access to both the Expert and the Jammer in
+every H x S cell, plus exactly two citizen peers.
 
-Jammer access is universal in every cell.
+This symmetric universal-elite specification is deliberate. An earlier
+pre-production version gave the Jammer universal access while restricting the
+Expert to a 10% gateway subset. That asymmetry produced explosive adversarial
+feedback in some high-segregation seeds and was rejected before production.
 
-Peer degree remains exactly two.
-
-Therefore the homophily manipulation does not change direct elite opportunity
-or degree.
+The retained specification matches the elite structure of the extended-network
+baseline: Expert and Jammer access are universal, while only citizen-peer
+mixing changes with the homophily treatment. Total structural degree is
+therefore exactly four for every citizen in every factorial cell.
 
 ### Homophily manipulation
 
@@ -315,7 +319,7 @@ Experiment IV must satisfy:
 - finite citizen states;
 - exact T=200;
 - fixed group labels across cells;
-- identical Expert access across cells;
+- universal Expert and Jammer access in every cell;
 - identical structure across low/high segregation at a given H;
 - identical initial state across low/high homophily at a given S;
 - clear realized low/high structural homophily separation;
