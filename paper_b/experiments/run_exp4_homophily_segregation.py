@@ -351,6 +351,12 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 def consolidate(root: Path, manifest: dict) -> dict:
     shards = _read_shards(root)
     runs = [row for shard in shards for row in shard["runs"]]
+    belief_checkpoints = [
+        row for shard in shards for row in shard.get("belief_checkpoints", [])
+    ]
+    lambda_checkpoints = [
+        row for shard in shards for row in shard.get("lambda_checkpoints", [])
+    ]
 
     # Build D = MSE(J1)-MSE(J0) within each H x S cell.
     by_cell = {}
@@ -443,6 +449,8 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp4_cell_disruption.csv", cells)
     _write_csv(root / "exp4_homophily_segregation_interaction.csv", interactions)
     _write_csv(root / "exp4_design_audit.csv", audits)
+    _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
+    _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
 
     expected_blocks = int(manifest["expected_blocks"])
     expected_runs = int(manifest["expected_runs"])
@@ -500,6 +508,8 @@ def package(root: Path, design_id: str) -> Path:
         "exp4_cell_disruption.csv",
         "exp4_homophily_segregation_interaction.csv",
         "exp4_design_audit.csv",
+        "belief_checkpoints.csv",
+        "lambda_checkpoints.csv",
         "exp4_gate.json",
     )
     path = root.parent / f"paper_b_exp4_{design_id}_shareable.zip"
