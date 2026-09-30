@@ -32,6 +32,8 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+import numpy as np
+
 from model.InfoSourceSamplingLearning import InfoSampleModel
 from paper_b.experiments.run_local_diagnostic import (
     NETWORK_ENVIRONMENTS,
@@ -222,6 +224,26 @@ def pilot_checkpoint_periods(model: InfoSampleModel) -> list[int]:
     return sorted(values)
 
 
+def belief_checkpoint_metrics(model: InfoSampleModel, period: int) -> dict:
+    """Truth-loss summary from the stored post-period citizen belief vector."""
+    values = np.asarray(model.agent_mu_theta_list[period], dtype=float)
+    truth = float(model.state_of_the_world)
+    errors = values - truth
+    mean = float(values.mean())
+    variance = float(values.var(ddof=0))
+    mse = float(np.mean(errors**2))
+    return {
+        "period": int(period),
+        "mean_belief": mean,
+        "belief_variance": variance,
+        "belief_sd": float(math.sqrt(variance)),
+        "squared_displacement": float((mean - truth) ** 2),
+        "mse_truth": mse,
+        "rmse_truth": float(math.sqrt(mse)),
+        "mae_truth": float(np.mean(np.abs(errors))),
+    }
+
+
 def _condition_label(reliance_mode: str, jammer_active: bool) -> str:
     return f"{reliance_mode}__J{int(jammer_active)}"
 
@@ -313,12 +335,19 @@ def run_condition(
     ]
 
     lambda_rows = []
+    belief_checkpoint_rows = []
     edge_rows = []
     for period in pilot_checkpoint_periods(model):
         lambda_rows.append(
             {
                 **common,
                 **reliance_checkpoint_metrics(model, period),
+            }
+        )
+        belief_checkpoint_rows.append(
+            {
+                **common,
+                **belief_checkpoint_metrics(model, period),
             }
         )
         if save_edge_log:
@@ -334,6 +363,7 @@ def run_condition(
         "run": run_row,
         "beliefs": belief_rows,
         "lambda_checkpoints": lambda_rows,
+        "belief_checkpoints": belief_checkpoint_rows,
         "jammer_strategy": jammer_rows,
         "edges": edge_rows,
     }
@@ -440,6 +470,9 @@ def run_block(task: dict) -> dict:
         ],
         "lambda_checkpoints": [
             row for result in results for row in result["lambda_checkpoints"]
+        ],
+        "belief_checkpoints": [
+            row for result in results for row in result["belief_checkpoints"]
         ],
         "jammer_strategy": [
             row for result in results for row in result["jammer_strategy"]
