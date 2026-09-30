@@ -83,6 +83,15 @@ def parse_args() -> argparse.Namespace:
         default="flat,consensus,polarized",
         help="Comma-separated subset of flat,consensus,polarized.",
     )
+    parser.add_argument(
+        "--network-environments",
+        default=",".join(NETWORK_ENVIRONMENTS),
+        help=(
+            "Comma-separated subset of "
+            + ",".join(NETWORK_ENVIRONMENTS)
+            + "."
+        ),
+    )
     parser.add_argument("--n-citizens", type=int, default=100)
     parser.add_argument(
         "--horizon",
@@ -158,6 +167,28 @@ def resolve_seeds(value: str, seed_start: int) -> list[int]:
     return seeds
 
 
+def parse_network_environments(value: str) -> list[str]:
+    environments = [
+        part.strip().lower()
+        for part in value.split(",")
+        if part.strip()
+    ]
+    invalid = [
+        env for env in environments
+        if env not in NETWORK_ENVIRONMENTS
+    ]
+    if invalid:
+        raise ValueError(
+            "Unknown network environment(s): "
+            f"{invalid}. Valid values: {list(NETWORK_ENVIRONMENTS)}"
+        )
+    if not environments:
+        raise ValueError("At least one network environment is required.")
+    if len(set(environments)) != len(environments):
+        raise ValueError("Network environments must be unique.")
+    return environments
+
+
 def canonical_hash(value) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -230,10 +261,14 @@ def pilot_checkpoint_periods(model: InfoSampleModel) -> list[int]:
     if not model.reliance_history:
         return []
     last = len(model.reliance_history) - 1
-    # Keep the reconstruction checkpoints and add a mid/late-horizon checkpoint
-    # for the default T=200 pilot.
+    # Keep the reconstruction checkpoints and add explicit horizon-calibration
+    # points. Because history is zero-indexed, period 199 is the state after
+    # 200 executed periods and period 399 is the state after 400 periods.
     values = set(checkpoint_periods(model))
-    values.update(p for p in (100, 150) if p <= last)
+    values.update(
+        p for p in (100, 150, 199, 299, 399)
+        if p <= last
+    )
     return sorted(values)
 
 
@@ -247,6 +282,7 @@ def belief_checkpoint_metrics(model: InfoSampleModel, period: int) -> dict:
     mse = float(np.mean(errors**2))
     return {
         "period": int(period),
+        "horizon_step": int(period) + 1,
         "mean_belief": mean,
         "belief_variance": variance,
         "belief_sd": float(math.sqrt(variance)),
@@ -504,7 +540,12 @@ def run_block(task: dict) -> dict:
     }
 
 
-def build_design(args: argparse.Namespace, seeds: list[int], regimes: list[str]) -> dict:
+def build_design(
+    args: argparse.Namespace,
+    seeds: list[int],
+    regimes: list[str],
+    environments: list[str],
+) -> dict:
     return {
         "design_version": 2,
         "purpose": "Paper B matched-seed production-calibration pilot",
@@ -512,7 +553,7 @@ def build_design(args: argparse.Namespace, seeds: list[int], regimes: list[str])
         "software_versions": software_versions(),
         "seeds": seeds,
         "initial_regimes": regimes,
-        "network_environments": list(NETWORK_ENVIRONMENTS),
+        "network_environments": environments,
         "matched_conditions": [
             _condition_label(mode, jammer) for mode, jammer in CONDITION_ORDER
         ],
@@ -531,6 +572,7 @@ def main() -> None:
     args = parse_args()
     seeds = resolve_seeds(args.seeds, args.seed_start)
     regimes = parse_regimes(args.initial_regimes)
+    environments = parse_network_environments(args.network_environments)
 
     if args.n_citizens < 4:
         raise ValueError("--n-citizens must be at least 4.")
@@ -541,7 +583,7 @@ def main() -> None:
     if args.workers <= 0:
         raise ValueError("--workers must be positive.")
 
-    design = build_design(args, seeds, regimes)
+    design = build_design(args, seeds, regimes, environments)
     design_id = canonical_hash(design)[:12]
     blocks = [
         {
@@ -552,7 +594,7 @@ def main() -> None:
         }
         for regime in regimes
         for seed in seeds
-        for environment in NETWORK_ENVIRONMENTS
+        for environment in environments
     ]
     design["design_id"] = design_id
     design["expected_blocks"] = len(blocks)
@@ -612,6 +654,7 @@ def main() -> None:
     print("Paper B matched pilot")
     print(f"  design_id       : {design_id}")
     print(f"  output           : {run_root}")
+    print(f"  networks         : {','.join(environments)}")
     print(f"  matched blocks   : {len(blocks)}")
     print(f"  individual runs  : {len(blocks) * 4}")
     print(f"  pending blocks   : {len(pending)}")
