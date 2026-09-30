@@ -22,6 +22,7 @@ from paper_b.metrics import (
     reliance_composition,
     theory_metrics,
 )
+from paper_b.experiments.consolidate_pilot import _horizon_sensitivity_rows
 from paper_b.validation import assert_finite_state
 
 
@@ -247,6 +248,54 @@ def check_effective_reliance_dynamics():
     assert adaptive_metrics["lambda_cumulative_turnover"] >= 0.0
 
 
+def check_horizon_sensitivity_contrasts():
+    rows = []
+    # Adaptive: D_200 = 3-1 = 2; D_400 = 5-2 = 3.
+    # Frozen:   D_200 = 2-1 = 1; D_400 = 3-1 = 2.
+    values = {
+        ("adaptive", True, 200): 3.0,
+        ("adaptive", False, 200): 1.0,
+        ("adaptive", True, 400): 5.0,
+        ("adaptive", False, 400): 2.0,
+        ("frozen", True, 200): 2.0,
+        ("frozen", False, 200): 1.0,
+        ("frozen", True, 400): 3.0,
+        ("frozen", False, 400): 1.0,
+    }
+    for (reliance, jammer, horizon), mse in values.items():
+        rows.append(
+            {
+                "seed": 1001,
+                "initial_regime": "flat",
+                "network_environment": "random_2",
+                "reliance_mode": reliance,
+                "jammer_active": jammer,
+                "K": 1,
+                "period": horizon - 1,
+                "horizon_step": horizon,
+                "mse_truth": mse,
+                "rmse_truth": math.sqrt(mse),
+                "mae_truth": mse / 2.0,
+            }
+        )
+
+    disruption, adaptive_frozen = _horizon_sensitivity_rows(rows)
+    assert len(disruption) == 2
+    assert len(adaptive_frozen) == 1
+
+    by_mode = {row["reliance_mode"]: row for row in disruption}
+    assert math.isclose(by_mode["adaptive"]["delta_mse_short"], 2.0)
+    assert math.isclose(by_mode["adaptive"]["delta_mse_long"], 3.0)
+    assert math.isclose(by_mode["adaptive"]["delta_mse_change"], 1.0)
+    assert math.isclose(by_mode["frozen"]["delta_mse_short"], 1.0)
+    assert math.isclose(by_mode["frozen"]["delta_mse_long"], 2.0)
+
+    af = adaptive_frozen[0]
+    assert math.isclose(af["adaptive_minus_frozen_short"], 1.0)
+    assert math.isclose(af["adaptive_minus_frozen_long"], 1.0)
+    assert math.isclose(af["adaptive_minus_frozen_change"], 0.0)
+
+
 def check_jammer_resurveillance_uses_current_beliefs():
     model = InfoSampleModel(
         model_attribute=build_config(
@@ -376,6 +425,7 @@ def main():
         check_fixed_horizon_execution,
         check_jammer_objective_and_hold_rule,
         check_jammer_resurveillance_uses_current_beliefs,
+        check_horizon_sensitivity_contrasts,
         check_effective_reliance_dynamics,
         check_environment_mapping,
         check_finite_multiperiod_run,
