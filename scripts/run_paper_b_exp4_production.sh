@@ -25,7 +25,6 @@ python -m paper_b.experiments.run_exp4_homophily_segregation \
   --k 1 \
   --epsilon 0.05 \
   --credit 20 \
-  --expert-access-share 0.10 \
   --peer-degree 2 \
   --low-homophily 0.50 \
   --high-homophily 0.90 \
