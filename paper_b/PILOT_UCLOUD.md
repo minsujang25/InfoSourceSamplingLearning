@@ -141,6 +141,25 @@ This ZIP contains the consolidated scientific outputs but not the hundreds of re
 
 Use the larger pilot to inspect the distribution of Delta MSE by network, prior regime, and reliance mode; adaptive-minus-frozen Delta MSE; seed-to-seed tails in Random 2 and Group ID; J=0 error in sparse networks; convergence-crossing times relative to T=200; late-horizon MSE movement using belief checkpoints; Lambda movement; and Jammer message-mean tails. These diagnostics determine the final T and the production seed count.
 
+## Targeted network subsets and horizon sensitivity
+
+The generic runner accepts a network subset through:
+
+```bash
+--network-environments random_2,group_id
+```
+
+This is used by the targeted T=400 calibration follow-up. See
+`paper_b/HORIZON_SENSITIVITY.md` and run it locally or on UCloud with:
+
+```bash
+PAPER_B_WORKERS=12 bash scripts/run_paper_b_horizon_sensitivity.sh
+```
+
+That sensitivity design runs 20 seeds x 3 priors x 2 sparse/local networks x 4
+matched conditions = 480 simulations at fixed T=400 and automatically produces
+T=200 versus T=400 disruption tables.
+
 ## Tiny smoke test
 
 ```bash
