@@ -12,7 +12,7 @@ Realized-flow and concentration diagnostics remain available as secondary checks
 from __future__ import annotations
 
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -259,6 +259,200 @@ def reliance_hhi(model) -> float:
     return float(np.mean(finite)) if finite else math.nan
 
 
+def _period_expected_weights(model, period: int) -> dict[int, dict[int, float]]:
+    """Return expected reliance weights keyed by ego and source for one period."""
+    if period < 0 or period >= len(getattr(model, "reliance_history", [])):
+        return {}
+
+    out: dict[int, dict[int, float]] = defaultdict(dict)
+    for record in model.reliance_history[period]:
+        out[int(record["ego"])][int(record["source"])] = float(
+            record["expected_reliance"]
+        )
+    return dict(out)
+
+
+def _mean_tv_distance(
+    left: dict[int, dict[int, float]],
+    right: dict[int, dict[int, float]],
+) -> float:
+    values = []
+    for ego in sorted(set(left) | set(right)):
+        l = left.get(ego, {})
+        r = right.get(ego, {})
+        sources = set(l) | set(r)
+        if not sources:
+            continue
+        values.append(
+            0.5
+            * sum(abs(float(l.get(s, 0.0)) - float(r.get(s, 0.0))) for s in sources)
+        )
+    return float(np.mean(values)) if values else math.nan
+
+
+def _top_source(weight_map: dict[int, float]) -> int | None:
+    if not weight_map:
+        return None
+    return min(
+        weight_map,
+        key=lambda source: (-float(weight_map[source]), int(source)),
+    )
+
+
+def effective_reliance_dynamics(model, baseline_period: int = 1) -> dict:
+    """Measure endogenous movement of Lambda_t rather than rank concentration.
+
+    The structural-to-effective divergence is constant when epsilon and source
+    degree are fixed because rank changes only permute a fixed probability
+    vector.  These diagnostics instead track how the *identity* of highly
+    weighted ties changes after the first credibility audit.
+
+    baseline_period=1 corresponds to the first state-learning period after the
+    period-0 credibility audit in the Paper B schedule.
+    """
+    history = getattr(model, "reliance_history", [])
+    if not history:
+        return {
+            "lambda_baseline_period": math.nan,
+            "lambda_first_audit_to_terminal_tv": math.nan,
+            "lambda_mean_period_turnover": math.nan,
+            "lambda_cumulative_turnover": math.nan,
+            "lambda_top_source_changed_share": math.nan,
+            "lambda_top_source_switches_per_citizen": math.nan,
+        }
+
+    base = min(max(int(baseline_period), 0), len(history) - 1)
+    terminal = len(history) - 1
+    base_weights = _period_expected_weights(model, base)
+    terminal_weights = _period_expected_weights(model, terminal)
+
+    terminal_tv = _mean_tv_distance(base_weights, terminal_weights)
+
+    turnovers = []
+    switch_counts = Counter()
+    previous = base_weights
+    previous_top = {ego: _top_source(weights) for ego, weights in previous.items()}
+
+    for period in range(base + 1, terminal + 1):
+        current = _period_expected_weights(model, period)
+        turnovers.append(_mean_tv_distance(previous, current))
+
+        current_top = {ego: _top_source(weights) for ego, weights in current.items()}
+        for ego in set(previous_top) | set(current_top):
+            if previous_top.get(ego) != current_top.get(ego):
+                switch_counts[ego] += 1
+
+        previous = current
+        previous_top = current_top
+
+    base_top = {ego: _top_source(weights) for ego, weights in base_weights.items()}
+    terminal_top = {
+        ego: _top_source(weights) for ego, weights in terminal_weights.items()
+    }
+    egos = sorted(set(base_top) | set(terminal_top))
+    changed_share = (
+        float(
+            np.mean(
+                [
+                    base_top.get(ego) != terminal_top.get(ego)
+                    for ego in egos
+                ]
+            )
+        )
+        if egos
+        else math.nan
+    )
+    switches_per_citizen = (
+        float(np.mean([switch_counts.get(ego, 0) for ego in egos]))
+        if egos
+        else math.nan
+    )
+
+    finite_turnovers = [x for x in turnovers if math.isfinite(x)]
+    return {
+        "lambda_baseline_period": int(base),
+        "lambda_first_audit_to_terminal_tv": terminal_tv,
+        "lambda_mean_period_turnover": (
+            float(np.mean(finite_turnovers)) if finite_turnovers else 0.0
+        ),
+        "lambda_cumulative_turnover": (
+            float(np.sum(finite_turnovers)) if finite_turnovers else 0.0
+        ),
+        "lambda_top_source_changed_share": changed_share,
+        "lambda_top_source_switches_per_citizen": switches_per_citizen,
+    }
+
+
+def reliance_checkpoint_metrics(
+    model,
+    period: int,
+    baseline_period: int = 1,
+) -> dict:
+    """Compact Lambda_t summary for a selected period."""
+    weights = _period_expected_weights(model, period)
+    if not weights:
+        return {
+            "period": int(period),
+            "expert_reliance": math.nan,
+            "jammer_reliance": math.nan,
+            "peer_reliance": math.nan,
+            "lambda_from_first_audit_tv": math.nan,
+            "effective_homophily": math.nan,
+            "peer_reliance_mass": math.nan,
+        }
+
+    source_meta = {}
+    for citizen in citizens(model):
+        for source in citizen.info_source:
+            source_meta[int(source.pos)] = {
+                "type": getattr(source, "type_of_agent", "unknown"),
+                "group": getattr(source, "group_id", None),
+            }
+
+    citizen_group = {int(c.pos): c.group_id for c in citizens(model)}
+    totals = Counter()
+    homophily_values = []
+    peer_mass_values = []
+
+    for ego, ego_weights in weights.items():
+        peer_mass = 0.0
+        same_peer_mass = 0.0
+        for source, weight in ego_weights.items():
+            meta = source_meta.get(source, {"type": "unknown", "group": None})
+            source_type = meta["type"]
+            if source_type == "infoprovider":
+                totals["expert"] += weight
+            elif source_type == "disruptivejammer":
+                totals["jammer"] += weight
+            elif source_type == "citizen":
+                totals["peer"] += weight
+                peer_mass += weight
+                if meta["group"] == citizen_group.get(ego):
+                    same_peer_mass += weight
+
+        peer_mass_values.append(peer_mass)
+        if peer_mass > 0.0:
+            homophily_values.append(same_peer_mass / peer_mass)
+
+    n = max(len(weights), 1)
+    base = min(max(int(baseline_period), 0), len(model.reliance_history) - 1)
+    base_weights = _period_expected_weights(model, base)
+
+    return {
+        "period": int(period),
+        "expert_reliance": float(totals["expert"] / n),
+        "jammer_reliance": float(totals["jammer"] / n),
+        "peer_reliance": float(totals["peer"] / n),
+        "lambda_from_first_audit_tv": _mean_tv_distance(base_weights, weights),
+        "effective_homophily": (
+            float(np.mean(homophily_values)) if homophily_values else math.nan
+        ),
+        "peer_reliance_mass": (
+            float(np.mean(peer_mass_values)) if peer_mass_values else math.nan
+        ),
+    }
+
+
 def theory_metrics(model) -> dict:
     """One compact run-level snapshot aligned with the manuscript theory."""
     out = {}
@@ -266,4 +460,5 @@ def theory_metrics(model) -> dict:
     out.update(reliance_composition(model))
     out["structural_effective_divergence"] = structural_effective_divergence(model)
     out.update(effective_homophily(model))
+    out.update(effective_reliance_dynamics(model))
     return out
