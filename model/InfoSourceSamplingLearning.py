@@ -228,6 +228,8 @@ class InfoSampleModel(Model):
         self.elite_access_probability = float(
             take("elite_access_probability", elite_access_probability)
         )
+        self.structural_source_map = take("structural_source_map", None)
+        self.fixed_group_ids = take("fixed_group_ids", None)
         self.jammer_active = bool(take("jammer_active", jammer_active))
         self.surveillance_interval = max(
             1, int(take("surveillance_interval", surveillance_interval))
@@ -263,6 +265,7 @@ class InfoSampleModel(Model):
         self.grid = NetworkGrid(placement_graph)
 
         self._create_agents(cfg)
+        self._apply_fixed_group_ids()
         self._build_structural_sources()
         self._initialize_citizen_source_priors()
         self.update_network()
@@ -360,6 +363,33 @@ class InfoSampleModel(Model):
                 sd_theta=float(sd_theta[pos]),
             )
             self.grid.place_agent(agent, pos)
+
+    def _apply_fixed_group_ids(self) -> None:
+        """Apply experiment-supplied group labels independent of belief sign."""
+        if self.fixed_group_ids is None:
+            return
+
+        raw = self.fixed_group_ids
+        if isinstance(raw, dict):
+            mapping = {int(k): int(v) for k, v in raw.items()}
+        else:
+            if len(raw) != self.num_nodes:
+                raise ValueError(
+                    "fixed_group_ids must have one entry per model node."
+                )
+            mapping = {pos: int(raw[pos]) for pos in range(self.num_nodes)}
+
+        for agent in self.agents:
+            if int(agent.pos) not in mapping:
+                raise ValueError(
+                    f"fixed_group_ids is missing node {agent.pos}."
+                )
+            value = mapping[int(agent.pos)]
+            if value not in {-1, 1}:
+                raise ValueError(
+                    "fixed_group_ids values must be -1 or +1."
+                )
+            agent.group_id = value
 
     def _agents_of_type(self, agent_type: str) -> list[Agent]:
         return [
@@ -475,11 +505,46 @@ class InfoSampleModel(Model):
         return selected
 
     def _build_structural_sources(self) -> None:
-        """Construct fixed source sets for the theory-aligned environments."""
+        """Construct fixed source sets for the theory-aligned environments.
+
+        An explicit structural_source_map takes precedence over the named
+        environment constructors. This is used by Experiments III and IV to
+        hold selected structural components exactly fixed across treatments.
+        """
         env = self.network_environment
 
+        explicit_map = None
+        if self.structural_source_map is not None:
+            explicit_map = {
+                int(ego): [int(source) for source in sources]
+                for ego, sources in self.structural_source_map.items()
+            }
+        agents_by_pos = {int(agent.pos): agent for agent in self.agents}
+
         for citizen in self.citizens:
-            if env == "elite_only":
+            if explicit_map is not None:
+                ego = int(citizen.pos)
+                if ego not in explicit_map:
+                    raise ValueError(
+                        f"structural_source_map is missing citizen {ego}."
+                    )
+                source_positions = explicit_map[ego]
+                if len(source_positions) != len(set(source_positions)):
+                    raise ValueError(
+                        f"Duplicate structural sources for citizen {ego}."
+                    )
+                invalid = [
+                    pos for pos in source_positions
+                    if pos not in agents_by_pos or pos == ego
+                ]
+                if invalid:
+                    raise ValueError(
+                        f"Invalid structural sources for citizen {ego}: "
+                        f"{invalid}"
+                    )
+                sources = [agents_by_pos[pos] for pos in source_positions]
+
+            elif env == "elite_only":
                 sources = list(self.elite_sources)
 
             elif env == "random_2":
