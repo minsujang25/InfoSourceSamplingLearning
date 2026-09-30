@@ -11,6 +11,8 @@ on:
       - "scripts/smoke_test.py"
       - "scripts/run_paper_b_pilot_ucloud.sh"
       - "scripts/run_paper_b_horizon_sensitivity.sh"
+      - "scripts/run_paper_b_exp3_production.sh"
+      - "scripts/run_paper_b_exp4_production.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
   pull_request:
@@ -20,6 +22,8 @@ on:
       - "scripts/smoke_test.py"
       - "scripts/run_paper_b_pilot_ucloud.sh"
       - "scripts/run_paper_b_horizon_sensitivity.sh"
+      - "scripts/run_paper_b_exp3_production.sh"
+      - "scripts/run_paper_b_exp4_production.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
 
