@@ -171,6 +171,7 @@ class InfoSampleModel(Model):
         jammer_active: bool = True,
         surveillance_interval: int = 5,
         convergence_tolerance: float = 1e-3,
+        stop_on_convergence: bool = False,
         single_message_variance: float = DEFAULT_SINGLE_MESSAGE_VAR,
     ):
         super().__init__(rng=rng)
@@ -234,6 +235,9 @@ class InfoSampleModel(Model):
         self.convergence_tolerance = float(
             take("convergence_tolerance", convergence_tolerance)
         )
+        self.stop_on_convergence = bool(
+            take("stop_on_convergence", stop_on_convergence)
+        )
         self.single_message_variance = float(
             take("single_message_variance", single_message_variance)
         )
@@ -245,9 +249,11 @@ class InfoSampleModel(Model):
         self.agent_mu_theta_list: list[list[float]] = []
         self.agent_num_request_list: list[list[list[int]]] = []
         self.reliance_history: list[list[dict]] = []
+        self.jammer_strategy_history: list[dict] = []
         self.avg_agent_mu_theta_diff = math.inf
         self.avg_agent_mu_theta_diff_rate = math.inf
         self.avg_agent_sd_theta = math.inf
+        self.first_convergence_period: int | None = None
         self.running = True
 
         placement_graph = self._placement_graph(
@@ -571,7 +577,9 @@ class InfoSampleModel(Model):
 
     def _prepare_adversary(self) -> None:
         if self.jammer is not None:
-            self.jammer.prepare_for_period()
+            records = self.jammer.prepare_for_period()
+            if records:
+                self.jammer_strategy_history.extend(records)
 
     def _record_reliance(self) -> None:
         records = []
@@ -630,22 +638,36 @@ class InfoSampleModel(Model):
         self.avg_agent_mu_theta_diff_rate = self._theta_update_change()
         self.avg_agent_sd_theta = self.get_agent_avg_sd_theta()
 
+        if (
+            self.first_convergence_period is None
+            and self.period >= 2
+            and math.isfinite(self.avg_agent_mu_theta_diff_rate)
+            and self.avg_agent_mu_theta_diff_rate < self.convergence_tolerance
+        ):
+            self.first_convergence_period = self.period + 1
+
         self.period += 1
 
     def run_model(self, print_time: bool = True) -> None:
-        while self.running:
+        """Run the model for the configured horizon.
+
+        Paper B's primary estimand compares J=1 and J=0 at a common terminal
+        horizon T, so fixed-horizon execution is the default. Convergence is
+        recorded diagnostically and only stops a run when the explicitly
+        legacy-style stop_on_convergence switch is enabled.
+        """
+        while self.steps < self.max_steps:
             if print_time:
                 print(f"Running step :{self.period}")
             self.step()
 
-            reached_limit = self.steps >= self.max_steps
-            converged = (
-                self.steps >= 3
-                and math.isfinite(self.avg_agent_mu_theta_diff_rate)
-                and self.avg_agent_mu_theta_diff_rate < self.convergence_tolerance
-            )
-            if reached_limit or converged:
-                self.running = False
+            if (
+                self.stop_on_convergence
+                and self.first_convergence_period is not None
+            ):
+                break
+
+        self.running = False
 
 
 class InfoAgents(Agent):
@@ -752,6 +774,7 @@ class DisruptiveJammer(InfoAgents):
         self.msg_param_at_t_per_cluster: dict[int, dict] = {}
         self.expected_cluster_theta_beliefs: dict[int, dict] = {}
         self._current_msg_param: dict[int, dict] = {}
+        self._strategy_state: dict[int, dict] = {}
 
     def surveil_citizen(self) -> None:
         """Cluster current pre-update citizen beliefs at surveillance time."""
@@ -788,90 +811,119 @@ class DisruptiveJammer(InfoAgents):
         self.citizen_per_cl = clusters
 
     @staticmethod
-    def calculate_v(prior_std: float, alpha: float) -> float:
-        prior_var = max(float(prior_std) ** 2, MIN_VAR)
-        denom = prior_var + 2.0 * alpha - 1.0
-        if abs(denom) < MIN_SD:
-            denom = MIN_SD if denom >= 0 else -MIN_SD
-        return prior_var / denom
+    def segment_response_gain(segment_std: float) -> float:
+        """Gaussian response gain implied by a unit-variance Jammer signal.
 
-    def expected_cluster_mean(
-        self,
-        prior_mu: float,
-        prior_std: float,
-        alpha: float,
-        message_mean: float,
-    ) -> float:
-        v = self.calculate_v(prior_std, alpha)
-        return (1.0 - v) * prior_mu + v * alpha * message_mean
+        The Jammer observes only a segment-level location and dispersion. We
+        therefore use the segment dispersion as the representative uncertainty
+        in the one-step response approximation:
+            kappa = s_g^2 / (s_g^2 + 1).
+        """
+        segment_var = max(float(segment_std) ** 2, 0.0)
+        return segment_var / (segment_var + 1.0)
 
-    @staticmethod
-    def expected_cluster_std(prior_std: float) -> float:
-        """Legacy jammer belief forecast retained, returned as an SD."""
-        prior_var = max(float(prior_std) ** 2, MIN_VAR)
-        posterior_var = prior_var / (prior_var + 1.0)
-        return math.sqrt(max(posterior_var, MIN_VAR))
+    @classmethod
+    def optimal_message_mean(
+        cls,
+        *,
+        segment_mean: float,
+        segment_std: float,
+        truth: float,
+        underlying_position: float,
+    ) -> tuple[float, float]:
+        """Closed-form segment message implied by the documented DDP objective.
 
-    def _initialize_from_current_surveillance(self) -> None:
+        For a representative segment, approximate the post-message mean as
+
+            mu_post(m) = (1-kappa) * mu_g + kappa * m,
+
+        with unit message variance and
+            kappa = s_g^2 / (s_g^2 + 1).
+
+        The documented one-period disruptive objective is
+
+            U_g(m) = (mu_post(m) - theta)^2
+                     - (m - mu_D)^2.
+
+        Because 0 <= kappa < 1, the quadratic coefficient kappa^2 - 1
+        is strictly negative and the objective has a unique finite maximizer:
+
+            m* = [kappa((1-kappa)mu_g - theta) + mu_D]
+                 / (1-kappa^2).
+
+        No clipping or ad-hoc message bound is used.
+        """
+        mu_g = float(segment_mean)
+        s_g = max(float(segment_std), 0.0)
+        theta = float(truth)
+        mu_d = float(underlying_position)
+
+        kappa = cls.segment_response_gain(s_g)
+        denom = 1.0 - kappa**2
+        if not math.isfinite(denom) or denom <= 0.0:
+            raise FloatingPointError(
+                "Jammer objective is not strictly concave under the current "
+                f"segment dispersion: std={s_g}, kappa={kappa}."
+            )
+
+        msg_mean = (
+            kappa * ((1.0 - kappa) * mu_g - theta) + mu_d
+        ) / denom
+        if not math.isfinite(msg_mean):
+            raise FloatingPointError(
+                "Non-finite optimal Jammer message mean for "
+                f"mu={mu_g}, std={s_g}, kappa={kappa}."
+            )
+        return float(msg_mean), float(kappa)
+
+    def _optimize_from_current_surveillance(self) -> None:
+        """Choose one segment-specific message mean at a surveillance refresh."""
         params = {}
-        expected = {}
+        state = {}
         centroids = self.citizen_intel["centroids"]
 
         for cluster, citizens in self.citizen_per_cl.items():
             current = np.asarray([c._message_mu for c in citizens], dtype=float)
-            centroid = float(centroids[cluster])
-            spread = float(current.std(ddof=0)) if current.size > 1 else 1.0
-            spread = max(spread, MIN_SD)
-            params[cluster] = {"avg": centroid, "std": 1.0}
-            expected[cluster] = {"avg": centroid, "std": spread}
+            segment_mean = float(centroids[cluster])
+            segment_std = (
+                float(current.std(ddof=0)) if current.size > 1 else 0.0
+            )
+            msg_mean, kappa = self.optimal_message_mean(
+                segment_mean=segment_mean,
+                segment_std=segment_std,
+                truth=self.model.state_of_the_world,
+                underlying_position=self.mu_theta,
+            )
 
-        self._current_msg_param = params
-        self.expected_cluster_theta_beliefs = expected
-
-    def _tune_current_message_param(self) -> None:
-        if not self.expected_cluster_theta_beliefs:
-            self._initialize_from_current_surveillance()
-            return
-
-        alpha = 0.95
-        theta = self.model.state_of_the_world
-        tuned = {}
-        next_expected = {}
-
-        for cluster, prior in self.expected_cluster_theta_beliefs.items():
-            prior_mu = float(prior["avg"])
-            prior_std = max(float(prior["std"]), MIN_SD)
-            v = self.calculate_v(prior_std, alpha)
-            denom = v * alpha - 1.0
-            if abs(denom) < 1e-8:
-                msg_mean = prior_mu
-            else:
-                msg_mean = (
-                    v * alpha * theta
-                    - prior_mu
-                    - v * alpha * (1.0 - v) * prior_mu
-                ) / denom
-
-            tuned[cluster] = {"avg": float(msg_mean), "std": 1.0}
-            next_expected[cluster] = {
-                "avg": float(
-                    self.expected_cluster_mean(
-                        prior_mu, prior_std, alpha, msg_mean
-                    )
-                ),
-                "std": float(self.expected_cluster_std(prior_std)),
+            params[cluster] = {"avg": msg_mean, "std": 1.0}
+            state[cluster] = {
+                "segment_mean": segment_mean,
+                "segment_std": segment_std,
+                "response_gain": kappa,
+                "message_mean": msg_mean,
+                "message_sd": 1.0,
+                "cluster_size": int(current.size),
             }
 
-        self._current_msg_param = tuned
-        self.expected_cluster_theta_beliefs = next_expected
+        self._current_msg_param = params
+        self._strategy_state = state
 
-    def prepare_for_period(self) -> None:
-        """Prepare one common period-t message policy before citizens sample."""
+    def prepare_for_period(self) -> list[dict]:
+        """Prepare and log the period-t Jammer strategy.
+
+        Surveillance occurs at initialization and every surveillance_interval
+        periods. At a refresh the Jammer observes the current pre-update belief
+        distribution and chooses one message mean per segment. Those message
+        means remain fixed until the next surveillance refresh.
+
+        This replaces the legacy within-window recurrence that retuned message
+        means every period and did not use the Jammer's underlying position in
+        the documented deviation-cost objective.
+        """
         if not self.model.jammer_active:
-            # Matched J=0 counterfactual keeps the node and structural source slot
-            # but neutralizes adversarial content.
             self._current_msg_param = {}
-            return
+            self._strategy_state = {}
+            return []
 
         refresh = (
             not self.citizen_intel
@@ -879,9 +931,20 @@ class DisruptiveJammer(InfoAgents):
         )
         if refresh:
             self.surveil_citizen()
-            self._initialize_from_current_surveillance()
-        else:
-            self._tune_current_message_param()
+            self._optimize_from_current_surveillance()
+
+        records = []
+        for cluster in sorted(self._strategy_state):
+            state = self._strategy_state[cluster]
+            records.append(
+                {
+                    "period": int(self.model.period),
+                    "cluster": int(cluster),
+                    "refresh": bool(refresh),
+                    **state,
+                }
+            )
+        return records
 
     def mu_out(self, n_req: int, requester) -> list[float]:
         if n_req <= 0:
