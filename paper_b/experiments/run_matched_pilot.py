@@ -160,6 +160,31 @@ def canonical_hash(value) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def code_fingerprint() -> str:
+    """Hash the scientific code that defines a pilot shard.
+
+    The design ID includes this fingerprint so --resume can never silently mix
+    shards produced by different reconstruction code under the same parameter
+    grid.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    paths = (
+        repo_root / "model" / "InfoSourceSamplingLearning.py",
+        repo_root / "paper_b" / "metrics.py",
+        repo_root / "paper_b" / "experiments" / "run_local_diagnostic.py",
+        repo_root / "paper_b" / "experiments" / "run_matched_pilot.py",
+    )
+    payload = []
+    for path in paths:
+        payload.append(
+            {
+                "path": str(path.relative_to(repo_root)),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    return canonical_hash(payload)
+
+
 def initial_state_fingerprint(config: dict) -> str:
     payload = {
         "state_of_the_world": float(config["state_of_the_world"]),
@@ -435,8 +460,9 @@ def run_block(task: dict) -> dict:
 
 def build_design(args: argparse.Namespace, seeds: list[int], regimes: list[str]) -> dict:
     return {
-        "design_version": 1,
+        "design_version": 2,
         "purpose": "Paper B matched-seed production-calibration pilot",
+        "scientific_code_fingerprint": code_fingerprint(),
         "seeds": seeds,
         "initial_regimes": regimes,
         "network_environments": list(NETWORK_ENVIRONMENTS),
