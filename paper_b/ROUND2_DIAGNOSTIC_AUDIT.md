@@ -153,8 +153,10 @@ invariants:
 - exact frozen-reliance invariance after the first audit;
 - matched four-environment topology.
 
-The next simulation should therefore be a larger matched-seed pilot, not another
-mechanical code reconstruction. The pilot should be used to determine the
+The next simulation is therefore the prepared larger matched-seed calibration
+pilot, not another mechanical code reconstruction. Its canonical design is 20
+seeds x 3 prior regimes x 4 network environments x 4 matched conditions = 960
+individual runs, with K=1 and fixed T=200. The pilot is used to determine the
 production seed count, confirm the distribution of Delta MSE under sparse
-networks, and inspect whether the chosen T is long enough across all four
-environments and prior regimes.
+networks, and inspect whether T=200 is long enough across all four environments
+and prior regimes. See `paper_b/PILOT_UCLOUD.md`.
