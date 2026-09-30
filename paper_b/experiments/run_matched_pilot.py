@@ -27,6 +27,7 @@ import hashlib
 import json
 import math
 import multiprocessing as mp
+from importlib import metadata as importlib_metadata
 import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -175,6 +176,7 @@ def code_fingerprint() -> str:
         repo_root / "paper_b" / "metrics.py",
         repo_root / "paper_b" / "experiments" / "run_local_diagnostic.py",
         repo_root / "paper_b" / "experiments" / "run_matched_pilot.py",
+        repo_root / "environment.yml",
     )
     payload = []
     for path in paths:
@@ -185,6 +187,17 @@ def code_fingerprint() -> str:
             }
         )
     return canonical_hash(payload)
+
+
+def software_versions() -> dict:
+    packages = ("mesa", "numpy", "scipy", "scikit-learn", "networkx")
+    versions = {}
+    for package in packages:
+        try:
+            versions[package] = importlib_metadata.version(package)
+        except importlib_metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
 
 
 def initial_state_fingerprint(config: dict) -> str:
@@ -496,6 +509,7 @@ def build_design(args: argparse.Namespace, seeds: list[int], regimes: list[str])
         "design_version": 2,
         "purpose": "Paper B matched-seed production-calibration pilot",
         "scientific_code_fingerprint": code_fingerprint(),
+        "software_versions": software_versions(),
         "seeds": seeds,
         "initial_regimes": regimes,
         "network_environments": list(NETWORK_ENVIRONMENTS),
