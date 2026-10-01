@@ -437,6 +437,64 @@ def exp3b_focal_corrective_connectivity(
     return out
 
 
+def exp3b_focal_nominal_corrective_route_count(
+    source_map: dict[int, list[int]],
+    *,
+    focals: Iterable[int],
+    relays: Iterable[int],
+    gateways: Iterable[int],
+) -> dict[int, int]:
+    """Count designed focal->relay->gateway->Expert routes, overlap allowed.
+
+    Unlike exp3b_focal_corrective_connectivity, this quantity counts both
+    nominal corrective routes even when they share the same gateway. The clean
+    IIIb counterfactual requires this count to equal two in both treatments.
+    """
+    relay_set = set(int(x) for x in relays)
+    gateway_set = set(int(x) for x in gateways)
+    out: dict[int, int] = {}
+    for focal in focals:
+        count = 0
+        relay_sources = [
+            int(x)
+            for x in source_map[int(focal)]
+            if int(x) in relay_set
+        ]
+        for relay in relay_sources:
+            count += sum(
+                int(source) in gateway_set
+                for source in source_map[int(relay)]
+            )
+        out[int(focal)] = int(count)
+    return out
+
+
+def exp3b_focal_shared_bottleneck_indicator(
+    source_map: dict[int, list[int]],
+    *,
+    focals: Iterable[int],
+    relays: Iterable[int],
+    gateways: Iterable[int],
+) -> dict[int, int]:
+    """Return one when a focal's nominal corrective routes share a gateway."""
+    nominal = exp3b_focal_nominal_corrective_route_count(
+        source_map,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    disjoint = exp3b_focal_corrective_connectivity(
+        source_map,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    return {
+        int(focal): int(nominal[int(focal)] > disjoint[int(focal)])
+        for focal in focals
+    }
+
+
 def _homophilous_peers_for_ego(
     *,
     seed: int,
