@@ -289,11 +289,7 @@ def _read_shards(root: Path) -> list[dict]:
     return out
 
 
-def _write_csv(path: Path, rows: list[dict]) -> None:
-    import csv
-
-    if not rows:
-        return
+def _csv_columns(rows: list[dict]) -> list[str]:
     columns = []
     seen = set()
     for row in rows:
@@ -301,7 +297,28 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
             if key not in seen:
                 seen.add(key)
                 columns.append(key)
+    return columns
+
+
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    if not rows:
+        return
+    columns = _csv_columns(rows)
     with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_csv_gz(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    if not rows:
+        return
+    columns = _csv_columns(rows)
+    with gzip.open(path, "wt", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
@@ -407,10 +424,10 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp3_redundancy_contrasts.csv", contrasts)
     _write_csv(root / "exp3_activation_interaction.csv", activation)
     _write_csv(root / "exp3_design_audit.csv", audit_rows)
-    _write_csv(root / "terminal_beliefs.csv", terminal_beliefs)
+    _write_csv_gz(root / "terminal_beliefs.csv.gz", terminal_beliefs)
     _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
     _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
-    _write_csv(root / "jammer_strategy.csv", jammer_strategy)
+    _write_csv_gz(root / "jammer_strategy.csv.gz", jammer_strategy)
 
     expected_blocks = int(manifest["expected_blocks"])
     expected_runs = int(manifest["expected_runs"])
@@ -498,10 +515,10 @@ def package(root: Path, design_id: str) -> Path:
         "exp3_redundancy_contrasts.csv",
         "exp3_activation_interaction.csv",
         "exp3_design_audit.csv",
-        "terminal_beliefs.csv",
+        "terminal_beliefs.csv.gz",
         "belief_checkpoints.csv",
         "lambda_checkpoints.csv",
-        "jammer_strategy.csv",
+        "jammer_strategy.csv.gz",
         "exp3_gate.json",
     )
     path = root.parent / f"paper_b_exp3_{design_id}_shareable.zip"
