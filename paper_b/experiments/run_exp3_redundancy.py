@@ -23,6 +23,8 @@ import multiprocessing as mp
 import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from model.InfoSourceSamplingLearning import MIN_SD
 from pathlib import Path
 
 from paper_b.experiments.run_local_diagnostic import (
@@ -259,6 +261,9 @@ def run_block(task: dict) -> dict:
         "mean_two_step_routes_high": sum(high_routes[e] for e in nongateways)
         / len(nongateways),
         "runs": [r["run"] for r in results],
+        "terminal_beliefs": [
+            x for r in results for x in r["beliefs"]
+        ],
         "belief_checkpoints": [
             x for r in results for x in r["belief_checkpoints"]
         ],
@@ -305,11 +310,17 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 def consolidate(root: Path, manifest: dict) -> dict:
     shards = _read_shards(root)
     runs = [row for shard in shards for row in shard["runs"]]
+    terminal_beliefs = [
+        row for shard in shards for row in shard.get("terminal_beliefs", [])
+    ]
     belief_checkpoints = [
         row for shard in shards for row in shard.get("belief_checkpoints", [])
     ]
     lambda_checkpoints = [
         row for shard in shards for row in shard.get("lambda_checkpoints", [])
+    ]
+    jammer_strategy = [
+        row for shard in shards for row in shard.get("jammer_strategy", [])
     ]
     jammer_rows, _ = matched_contrasts(runs)
 
@@ -396,8 +407,10 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp3_redundancy_contrasts.csv", contrasts)
     _write_csv(root / "exp3_activation_interaction.csv", activation)
     _write_csv(root / "exp3_design_audit.csv", audit_rows)
+    _write_csv(root / "terminal_beliefs.csv", terminal_beliefs)
     _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
     _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
+    _write_csv(root / "jammer_strategy.csv", jammer_strategy)
 
     expected_blocks = int(manifest["expected_blocks"])
     expected_runs = int(manifest["expected_runs"])
@@ -417,6 +430,32 @@ def consolidate(root: Path, manifest: dict) -> dict:
         for r in audit_rows
     )
 
+    max_mse = max((float(r["mse_truth"]) for r in runs), default=float("nan"))
+    max_abs_terminal_belief = max(
+        (abs(float(r["terminal_mu_theta"])) for r in terminal_beliefs),
+        default=float("nan"),
+    )
+    min_terminal_sd = min(
+        (float(r["terminal_sd_theta"]) for r in terminal_beliefs),
+        default=float("nan"),
+    )
+    terminal_sd_floor_count = sum(
+        float(r["terminal_sd_theta"]) <= MIN_SD * (1.0 + 1e-12)
+        for r in terminal_beliefs
+    )
+    terminal_sd_floor_share = (
+        terminal_sd_floor_count / len(terminal_beliefs)
+        if terminal_beliefs else float("nan")
+    )
+    max_abs_jammer_message = max(
+        (abs(float(r["message_mean"])) for r in jammer_strategy),
+        default=float("nan"),
+    )
+    max_jammer_response_gain = max(
+        (float(r["response_gain"]) for r in jammer_strategy),
+        default=float("nan"),
+    )
+
     report = {
         "pass": (
             len(shards) == expected_blocks
@@ -434,6 +473,13 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "all_runs_fixed_horizon": horizon,
         "frozen_lambda_invariant": frozen,
         "redundancy_route_gate": route_gate,
+        "max_terminal_mse": max_mse,
+        "max_abs_terminal_belief": max_abs_terminal_belief,
+        "min_terminal_sd_theta": min_terminal_sd,
+        "terminal_sd_floor_count": terminal_sd_floor_count,
+        "terminal_sd_floor_share": terminal_sd_floor_share,
+        "max_abs_jammer_message_mean": max_abs_jammer_message,
+        "max_jammer_response_gain": max_jammer_response_gain,
     }
     (root / "exp3_gate.json").write_text(
         json.dumps(report, indent=2, sort_keys=True),
@@ -452,8 +498,10 @@ def package(root: Path, design_id: str) -> Path:
         "exp3_redundancy_contrasts.csv",
         "exp3_activation_interaction.csv",
         "exp3_design_audit.csv",
+        "terminal_beliefs.csv",
         "belief_checkpoints.csv",
         "lambda_checkpoints.csv",
+        "jammer_strategy.csv",
         "exp3_gate.json",
     )
     path = root.parent / f"paper_b_exp3_{design_id}_shareable.zip"
@@ -473,7 +521,7 @@ def main() -> None:
         raise ValueError("--workers must be positive.")
 
     design = {
-        "design_version": 1,
+        "design_version": 2,
         "experiment": "III_corrective_redundancy",
         "scientific_code_fingerprint": scientific_code_fingerprint(),
         "software_versions": software_versions(),
