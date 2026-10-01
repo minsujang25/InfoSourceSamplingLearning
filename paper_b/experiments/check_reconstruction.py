@@ -26,6 +26,8 @@ from paper_b.experiments.consolidate_pilot import _horizon_sensitivity_rows
 from paper_b.structural_designs import (
     balanced_fixed_group_ids,
     exp3_redundancy_source_maps,
+    exp3b_focal_corrective_connectivity,
+    exp3b_path_independence_source_maps,
     exp4_homophily_source_maps,
     exp4_initial_beliefs,
     realized_prior_segregation,
@@ -429,6 +431,62 @@ def check_exp3_redundancy_design():
             assert high[ego] == 2
 
 
+def check_exp3b_path_independence_design():
+    blueprint = exp3b_path_independence_source_maps(
+        seed=504,
+        n_citizens=100,
+        n_gateways=10,
+        n_relays=40,
+    )
+    shared = blueprint["shared"]
+    independent = blueprint["independent"]
+    focals = set(blueprint["focals"])
+    relays = set(blueprint["relays"])
+    gateways = set(blueprint["gateways"])
+
+    # Focal immediate opportunity sets are exactly fixed.
+    for focal in focals:
+        assert shared[focal] == independent[focal]
+        assert JAMMER_POS in shared[focal]
+        assert sum(source in relays for source in shared[focal]) == 2
+
+    # Per-node source degree and elite access are exactly matched.
+    assert {
+        ego: len(sources) for ego, sources in shared.items()
+    } == {
+        ego: len(sources) for ego, sources in independent.items()
+    }
+    for ego in shared:
+        assert [x for x in shared[ego] if x < 2] == [
+            x for x in independent[ego] if x < 2
+        ]
+
+    shared_conn = exp3b_focal_corrective_connectivity(
+        shared,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    independent_conn = exp3b_focal_corrective_connectivity(
+        independent,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    assert all(value == 1 for value in shared_conn.values())
+    assert all(value == 2 for value in independent_conn.values())
+
+    # Gateway indegree from relay nodes is globally identical and balanced.
+    shared_indegree = {gateway: 0 for gateway in gateways}
+    independent_indegree = {gateway: 0 for gateway in gateways}
+    for gateway in blueprint["shared_relay_gateway"].values():
+        shared_indegree[gateway] += 1
+    for gateway in blueprint["independent_relay_gateway"].values():
+        independent_indegree[gateway] += 1
+    assert shared_indegree == independent_indegree
+    assert len(set(shared_indegree.values())) == 1
+
+
 def check_exp4_factorial_design():
     n_citizens = 40
     group_ids = balanced_fixed_group_ids(
@@ -590,6 +648,7 @@ def main():
         check_effective_reliance_dynamics,
         check_explicit_matched_topology_and_fixed_groups,
         check_exp3_redundancy_design,
+        check_exp3b_path_independence_design,
         check_exp4_factorial_design,
         check_environment_mapping,
         check_finite_multiperiod_run,
