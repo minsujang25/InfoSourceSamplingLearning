@@ -153,7 +153,8 @@ jobs:
       - name: Regression-test former Experiment III runaway seed
         run: |
           python -m paper_b.experiments.run_exp3_redundancy \
-            --seeds 2173 \
+            --seeds 1 \
+            --seed-start 2173 \
             --initial-regimes flat \
             --n-citizens 100 \
             --horizon 200 \
