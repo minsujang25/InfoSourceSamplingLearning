@@ -1,5 +1,12 @@
 # Reconstruction Round 2 Diagnostic Audit
 
+> **Historical note.** This audit documents Reconstruction Round 2 and is retained
+> for provenance. Its Jammer response gain used cross-sectional segment dispersion.
+> A later 500-seed Experiment III audit exposed a rare curvature-collapse pathway under
+> that approximation. The canonical Jammer rule now uses citizen posterior uncertainty;
+> see `paper_b/JAMMER_OBJECTIVE_AUDIT.md`. Round-2 quantitative outputs should therefore
+> be treated as historical diagnostics rather than current model evidence.
+
 ## Status
 
 The full 80-run matched diagnostic completed successfully under commit
