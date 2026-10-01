@@ -24,7 +24,7 @@ import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from model.InfoSourceSamplingLearning import MIN_SD
+import model.InfoSourceSamplingLearning as model_module
 from pathlib import Path
 
 from paper_b.experiments.run_local_diagnostic import (
@@ -64,6 +64,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expert-access-share", type=float, default=0.10)
     parser.add_argument("--peer-degree", type=int, default=2)
     parser.add_argument("--surveillance-interval", type=int, default=5)
+    parser.add_argument(
+        "--numerical-min-sd",
+        type=float,
+        default=1e-8,
+        help=(
+            "Numerical posterior-SD floor. Primary production uses 1e-8; "
+            "alternative values are for explicit sensitivity analysis only."
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         default="production_results/paper_b_exp3_redundancy",
@@ -161,6 +170,15 @@ def valid_shard(path: Path, design_id: str) -> bool:
 def run_block(task: dict) -> dict:
     seed = int(task["seed"])
     regime = task["initial_regime"]
+
+    numerical_min_sd = float(task["numerical_min_sd"])
+    if not 0.0 < numerical_min_sd < 1.0:
+        raise ValueError("numerical_min_sd must lie in (0,1).")
+    # Methods in the model module resolve these globals at call time. Setting
+    # them once per worker task permits explicit floor-sensitivity runs without
+    # changing the default scientific specification.
+    model_module.MIN_SD = numerical_min_sd
+    model_module.MIN_VAR = numerical_min_sd**2
     block_id = task["block_id"]
     design_id = task["design_id"]
     root = Path(task["run_root"])
@@ -456,8 +474,9 @@ def consolidate(root: Path, manifest: dict) -> dict:
         (float(r["terminal_sd_theta"]) for r in terminal_beliefs),
         default=float("nan"),
     )
+    numerical_min_sd = float(manifest["numerical_min_sd"])
     terminal_sd_floor_count = sum(
-        float(r["terminal_sd_theta"]) <= MIN_SD * (1.0 + 1e-12)
+        float(r["terminal_sd_theta"]) <= numerical_min_sd * (1.0 + 1e-12)
         for r in terminal_beliefs
     )
     terminal_sd_floor_share = (
@@ -552,6 +571,7 @@ def main() -> None:
         "expert_access_share": args.expert_access_share,
         "peer_degree": args.peer_degree,
         "surveillance_interval": args.surveillance_interval,
+        "numerical_min_sd": args.numerical_min_sd,
         "redundancy_levels": list(REDUNDANCY_LEVELS),
         "reliance_modes": list(RELIANCE_MODES),
         "jammer_states": [True, False],
@@ -612,6 +632,7 @@ def main() -> None:
                 "expert_access_share": args.expert_access_share,
                 "peer_degree": args.peer_degree,
                 "surveillance_interval": args.surveillance_interval,
+                "numerical_min_sd": args.numerical_min_sd,
             }
         )
 
