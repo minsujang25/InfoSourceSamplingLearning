@@ -34,6 +34,24 @@ The primary frozen counterfactual is now fixed: behavioral source ranking is fro
 after the first credibility audit. Later credibility and substantive learning continue,
 but later audits cannot change acquisition ranking.
 
+### Jammer response gain
+
+The earlier reconstruction used cross-sectional belief dispersion as a proxy for
+Bayesian responsiveness to a new Jammer message. The 500-seed Experiment III audit
+showed that this could collapse the Jammer objective curvature in rare trajectories.
+
+The current rule uses each citizen's state-posterior uncertainty:
+
+```text
+kappa_i = sigma_i^2 / (sigma_i^2 + 1).
+```
+
+The Jammer still chooses one common segment-specific message mean and retains the same
+quadratic disruption/deviation objective. Cross-sectional segment dispersion remains a
+descriptive surveillance statistic only. Under the primary initial SD of five, the
+objective denominator is bounded below by `51/676`, so audience disagreement alone
+cannot drive the curvature to zero.
+
 ## Theory-aligned invariants
 
 Before production runs, CI must verify:
@@ -43,6 +61,8 @@ Before production runs, CI must verify:
 - posterior SDs remain positive and finite;
 - first-audit-frozen ranking does not drift;
 - Jammer refreshes track current beliefs;
+- Jammer response gains are based on posterior SD, not cross-sectional disagreement;
+- the posterior-gain Jammer objective satisfies its model-implied curvature bound;
 - expected reliance shares sum to one;
 - no run is silently rescued through clipping.
 
