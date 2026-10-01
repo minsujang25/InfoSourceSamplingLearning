@@ -876,70 +876,111 @@ class DisruptiveJammer(InfoAgents):
         self.citizen_per_cl = clusters
 
     @staticmethod
-    def segment_response_gain(segment_std: float) -> float:
-        """Gaussian response gain implied by a unit-variance Jammer signal.
+    def posterior_response_gain(posterior_sd: float) -> float:
+        """Bayesian response gain to one unit-variance Jammer message.
 
-        The Jammer observes only a segment-level location and dispersion. We
-        therefore use the segment dispersion as the representative uncertainty
-        in the one-step response approximation:
-            kappa = s_g^2 / (s_g^2 + 1).
+        The gain is based on an individual citizen's current posterior
+        uncertainty about the state, not on cross-sectional disagreement
+        between citizens:
+
+            kappa_i = sigma_i^2 / (sigma_i^2 + 1).
+
+        This distinction is substantive. Cross-sectional dispersion describes
+        disagreement in the audience; it is not the uncertainty that governs
+        how strongly one citizen's Gaussian posterior responds to a new
+        observation.
         """
-        segment_var = max(float(segment_std) ** 2, 0.0)
-        return segment_var / (segment_var + 1.0)
+        sd = float(posterior_sd)
+        if not math.isfinite(sd) or sd < 0.0:
+            raise FloatingPointError(
+                f"Invalid citizen posterior SD for Jammer response: {sd}."
+            )
+        var = sd * sd
+        return var / (var + 1.0)
 
     @classmethod
     def optimal_message_mean(
         cls,
         *,
-        segment_mean: float,
-        segment_std: float,
+        citizen_means: Iterable[float],
+        citizen_sds: Iterable[float],
         truth: float,
         underlying_position: float,
-    ) -> tuple[float, float]:
-        """Closed-form segment message implied by the documented DDP objective.
+    ) -> tuple[float, dict[str, float]]:
+        """Closed-form segment message under heterogeneous posterior gains.
 
-        For a representative segment, approximate the post-message mean as
+        For each citizen i in the observed segment,
 
-            mu_post(m) = (1-kappa) * mu_g + kappa * m,
+            mu_i'(m) = (1-kappa_i) mu_i + kappa_i m,
 
-        with unit message variance and
-            kappa = s_g^2 / (s_g^2 + 1).
+        where kappa_i is implied by that citizen's current posterior SD and a
+        unit-variance Jammer message. The Jammer chooses one common segment
+        message mean m to maximize
 
-        The documented one-period disruptive objective is
+            U_g(m) = mean_i[(mu_i'(m)-theta)^2] - (m-mu_D)^2.
 
-            U_g(m) = (mu_post(m) - theta)^2
-                     - (m - mu_D)^2.
+        The unique maximizer is
 
-        Because 0 <= kappa < 1, the quadratic coefficient kappa^2 - 1
-        is strictly negative and the objective has a unique finite maximizer:
+            m* = {
+                E[kappa_i((1-kappa_i)mu_i-theta)] + mu_D
+            } / {
+                1 - E[kappa_i^2]
+            }.
 
-            m* = [kappa((1-kappa)mu_g - theta) + mu_D]
-                 / (1-kappa^2).
+        The denominator is determined by posterior uncertainty rather than
+        cross-sectional belief dispersion. Citizen theta posterior SDs start
+        at five in the Paper B designs and weakly decrease under Gaussian
+        updating, so the curvature cannot collapse merely because audience
+        beliefs become far apart.
 
-        No clipping or ad-hoc message bound is used.
+        No clipping or exogenous message bound is used.
         """
-        mu_g = float(segment_mean)
-        s_g = max(float(segment_std), 0.0)
+        means = np.asarray(list(citizen_means), dtype=float)
+        sds = np.asarray(list(citizen_sds), dtype=float)
+        if means.size == 0:
+            raise ValueError("Cannot optimize a Jammer message for an empty segment.")
+        if means.shape != sds.shape:
+            raise ValueError("citizen_means and citizen_sds must have equal length.")
+        if not np.isfinite(means).all() or not np.isfinite(sds).all():
+            raise FloatingPointError(
+                "Non-finite citizen posterior state in Jammer optimization."
+            )
+        if np.any(sds < 0.0):
+            raise FloatingPointError(
+                "Negative citizen posterior SD in Jammer optimization."
+            )
+
         theta = float(truth)
         mu_d = float(underlying_position)
-
-        kappa = cls.segment_response_gain(s_g)
-        denom = 1.0 - kappa**2
+        kappas = np.asarray(
+            [cls.posterior_response_gain(sd) for sd in sds],
+            dtype=float,
+        )
+        gain_sq_mean = float(np.mean(kappas**2))
+        denom = 1.0 - gain_sq_mean
         if not math.isfinite(denom) or denom <= 0.0:
             raise FloatingPointError(
                 "Jammer objective is not strictly concave under the current "
-                f"segment dispersion: std={s_g}, kappa={kappa}."
+                f"posterior gains: E[kappa^2]={gain_sq_mean}."
             )
 
-        msg_mean = (
-            kappa * ((1.0 - kappa) * mu_g - theta) + mu_d
-        ) / denom
+        linear_term = float(
+            np.mean(kappas * ((1.0 - kappas) * means - theta))
+        )
+        msg_mean = (linear_term + mu_d) / denom
         if not math.isfinite(msg_mean):
             raise FloatingPointError(
-                "Non-finite optimal Jammer message mean for "
-                f"mu={mu_g}, std={s_g}, kappa={kappa}."
+                "Non-finite optimal Jammer message mean for posterior-gain "
+                f"denominator={denom}."
             )
-        return float(msg_mean), float(kappa)
+
+        diagnostics = {
+            "response_gain": float(np.mean(kappas)),
+            "response_gain_max": float(np.max(kappas)),
+            "response_gain_sq_mean": gain_sq_mean,
+            "objective_denominator": float(denom),
+        }
+        return float(msg_mean), diagnostics
 
     def _optimize_from_current_surveillance(self) -> None:
         """Choose one segment-specific message mean at a surveillance refresh."""
@@ -949,13 +990,17 @@ class DisruptiveJammer(InfoAgents):
 
         for cluster, citizens in self.citizen_per_cl.items():
             current = np.asarray([c._message_mu for c in citizens], dtype=float)
+            current_sds = np.asarray(
+                [c._message_sd for c in citizens],
+                dtype=float,
+            )
             segment_mean = float(centroids[cluster])
             segment_std = (
                 float(current.std(ddof=0)) if current.size > 1 else 0.0
             )
-            msg_mean, kappa = self.optimal_message_mean(
-                segment_mean=segment_mean,
-                segment_std=segment_std,
+            msg_mean, diagnostics = self.optimal_message_mean(
+                citizen_means=current,
+                citizen_sds=current_sds,
                 truth=self.model.state_of_the_world,
                 underlying_position=self.mu_theta,
             )
@@ -963,8 +1008,13 @@ class DisruptiveJammer(InfoAgents):
             params[cluster] = {"avg": msg_mean, "std": 1.0}
             state[cluster] = {
                 "segment_mean": segment_mean,
+                # Cross-sectional belief dispersion is retained for descriptive
+                # surveillance diagnostics but no longer enters response gain.
                 "segment_std": segment_std,
-                "response_gain": kappa,
+                "posterior_sd_mean": float(current_sds.mean()),
+                "posterior_sd_min": float(current_sds.min()),
+                "posterior_sd_max": float(current_sds.max()),
+                **diagnostics,
                 "message_mean": msg_mean,
                 "message_sd": 1.0,
                 "cluster_size": int(current.size),
