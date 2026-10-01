@@ -146,29 +146,62 @@ def check_fixed_horizon_execution():
 
 
 def check_jammer_objective_and_hold_rule():
-    message, kappa = DisruptiveJammer.optimal_message_mean(
-        segment_mean=1.5,
-        segment_std=1.0,
+    means = np.asarray([1.5, -0.5, 2.0], dtype=float)
+    sds = np.asarray([1.0, 2.0, 0.5], dtype=float)
+    message, diagnostics = DisruptiveJammer.optimal_message_mean(
+        citizen_means=means,
+        citizen_sds=sds,
         truth=0.0,
         underlying_position=4.0,
     )
+    kappas = np.asarray(
+        [DisruptiveJammer.posterior_response_gain(sd) for sd in sds],
+        dtype=float,
+    )
 
     def utility(m):
-        post = (1.0 - kappa) * 1.5 + kappa * m
-        return (post - 0.0) ** 2 - (m - 4.0) ** 2
+        post = (1.0 - kappas) * means + kappas * m
+        return float(np.mean(post**2) - (m - 4.0) ** 2)
 
     assert math.isfinite(message)
     assert utility(message) > utility(message - 1.0)
     assert utility(message) > utility(message + 1.0)
+    assert 0.0 < diagnostics["objective_denominator"] <= 1.0
+    assert diagnostics["response_gain_max"] < 1.0
 
     # The documented deviation cost is centered on the Jammer's own position.
     shifted_message, _ = DisruptiveJammer.optimal_message_mean(
-        segment_mean=1.5,
-        segment_std=1.0,
+        citizen_means=means,
+        citizen_sds=sds,
         truth=0.0,
         underlying_position=8.0,
     )
     assert shifted_message > message
+
+    # Cross-sectional disagreement must not determine Bayesian response gain.
+    # With the Paper B initial citizen SD of 5, the maximum individual gain is
+    # exactly 25/26 no matter how far apart the citizen means are.
+    dispersed_message, dispersed = DisruptiveJammer.optimal_message_mean(
+        citizen_means=[-1e9, 1e9],
+        citizen_sds=[5.0, 5.0],
+        truth=0.0,
+        underlying_position=4.0,
+    )
+    max_initial_gain = 25.0 / 26.0
+    expected_denom = 1.0 - max_initial_gain**2
+    assert math.isfinite(dispersed_message)
+    assert math.isclose(
+        dispersed["response_gain_max"],
+        max_initial_gain,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    )
+    assert math.isclose(
+        dispersed["objective_denominator"],
+        expected_denom,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    )
 
     model = InfoSampleModel(
         model_attribute=build_config(
@@ -185,6 +218,8 @@ def check_jammer_objective_and_hold_rule():
     first = jammer.prepare_for_period()
     first_mean = first[0]["message_mean"]
     assert first[0]["refresh"] is True
+    assert first[0]["response_gain_max"] <= max_initial_gain + 1e-12
+    assert first[0]["objective_denominator"] >= expected_denom - 1e-12
 
     # Change the audience state inside the surveillance window. The strategy
     # must remain fixed until the next scheduled refresh.
