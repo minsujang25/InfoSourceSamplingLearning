@@ -95,4 +95,13 @@ print(f"\nSummary: {out}")
 
 if not summary["gate_pass"].all():
     raise SystemExit("At least one numerical-floor sensitivity run failed.")
+
+import zipfile
+
+bundle = root / "paper_b_exp3_floor_sensitivity_shareable.zip"
+with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.write(out, arcname=out.name)
+    for nested in sorted(root.glob("minsd_*/paper_b_exp3_*_shareable.zip")):
+        archive.write(nested, arcname=f"{nested.parent.name}/{nested.name}")
+print(f"Shareable bundle: {bundle}")
 PY
