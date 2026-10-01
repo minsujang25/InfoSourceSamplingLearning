@@ -9,14 +9,13 @@ Primary production design:
 
 Within each matched seed:
   * citizen group labels are fixed before beliefs are generated;
-  * direct Expert gateway access is fixed across all four H x S cells;
-  * the Jammer structural slot is universal and fixed;
+  * direct Expert and Jammer access are both universal and fixed;
   * peer degree is exactly two;
   * low/high homophily differ only in the citizen-peer mixing rule;
   * low/high segregation use the same individual residual draws and differ only
     in the group-mean shift.
 
-This implements the frozen Theory v1.0 requirement that group labels and Expert
+This implements the frozen Theory v1.0 requirement that group labels and elite
 access remain fixed while H^A and S0 vary independently.
 """
 
