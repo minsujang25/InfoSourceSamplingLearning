@@ -26,7 +26,7 @@ python --version
 
 It should report Python 3.12.x.
 
-## 2. Reconstruction-round-2 diagnostic
+## 2. Current reconstruction diagnostic
 
 The wrapper first runs all reconstruction checks and then executes the matched grid:
 
@@ -85,9 +85,11 @@ It contains:
 Reconstruction round 2 makes three scientific changes:
 
 1. **Fixed terminal horizon.** Every primary run executes exactly T periods.
-2. **Jammer objective.** The sender now optimizes the documented one-step disruptive
+2. **Jammer objective.** The sender optimizes the documented one-step disruptive
    objective at surveillance refreshes and holds the chosen segment message mean fixed
-   until the next refresh. The undocumented within-window recurrence has been removed.
+   until the next refresh. Individual response gains are now derived from citizen
+   posterior SDs rather than cross-sectional segment disagreement. The undocumented
+   within-window recurrence remains removed.
 3. **Dynamic Lambda metrics.** The output now measures change in the identity of
    highly weighted ties after the first credibility audit, not only the static distance
    from equal structural use.
@@ -127,8 +129,10 @@ should be zero.
 `jammer_strategy_trajectory.csv.gz` records for each active-Jammer segment and period:
 
 - surveillance refresh indicator;
-- observed segment mean and dispersion;
-- Gaussian response gain;
+- observed segment mean and cross-sectional dispersion;
+- segment posterior-SD mean/min/max;
+- mean and maximum individual Gaussian response gain;
+- mean squared response gain and the objective denominator;
 - optimized message mean;
 - cluster size.
 
