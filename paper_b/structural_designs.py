@@ -233,6 +233,210 @@ def two_step_expert_route_count(
     }
 
 
+
+def exp3b_path_independence_source_maps(
+    *,
+    seed: int,
+    n_citizens: int = 100,
+    n_gateways: int = 10,
+    n_relays: int = 40,
+) -> dict:
+    """Generate a clean shared-bottleneck vs independent-path counterfactual.
+
+    The design is deliberately layered. Citizens are partitioned once per seed
+    into three fixed roles:
+
+      * gateways: direct Expert + Jammer access;
+      * relays: Jammer + exactly one gateway source;
+      * focal citizens: Jammer + exactly two fixed relay sources.
+
+    The focal citizen -> relay edges are identical in both conditions. Only the
+    relay -> gateway assignment is rewired.
+
+    Relay pairs are grouped into four-relay blocks. For each block with
+    gateway pair (g1, g2):
+
+      SHARED:
+          r1,r2 -> g1
+          r3,r4 -> g2
+
+      INDEPENDENT:
+          r1,r3 -> g1
+          r2,r4 -> g2
+
+    Thus each focal citizen always observes the same two immediate relays. In
+    the shared condition those relays converge on one gateway, whereas in the
+    independent condition they connect to distinct gateways. Gateway indegree
+    from relays is identical in both conditions, as are all per-node source
+    counts and all elite opportunities.
+
+    With the default N=100 design:
+      10 gateways + 40 relays + 50 focal citizens = 100 citizens.
+    """
+    positions = citizen_positions(n_citizens)
+    if n_gateways < 2 or n_gateways % 2 != 0:
+        raise ValueError("n_gateways must be an even integer >= 2.")
+    if n_relays < 4 or n_relays % 4 != 0:
+        raise ValueError("n_relays must be a positive multiple of 4.")
+    n_focals = len(positions) - int(n_gateways) - int(n_relays)
+    if n_focals <= 0:
+        raise ValueError("Exp IIIb requires at least one focal citizen.")
+
+    role_order = list(
+        _rng(seed, 4501).permutation(np.asarray(positions, dtype=int))
+    )
+    gateways = [int(x) for x in role_order[:n_gateways]]
+    relays = [
+        int(x)
+        for x in role_order[n_gateways : n_gateways + n_relays]
+    ]
+    focals = [
+        int(x)
+        for x in role_order[n_gateways + n_relays :]
+    ]
+
+    gateway_order = list(
+        _rng(seed, 4502).permutation(np.asarray(gateways, dtype=int))
+    )
+    relay_order = list(
+        _rng(seed, 4503).permutation(np.asarray(relays, dtype=int))
+    )
+    focal_order = list(
+        _rng(seed, 4504).permutation(np.asarray(focals, dtype=int))
+    )
+
+    relay_pairs = [
+        (relay_order[i], relay_order[i + 1])
+        for i in range(0, len(relay_order), 2)
+    ]
+    n_pair_blocks = len(relay_pairs) // 2
+    if n_pair_blocks <= 0:
+        raise ValueError("Exp IIIb requires at least two relay pairs.")
+
+    # Assign each four-relay block a pair of distinct gateways while keeping
+    # gateway use balanced. With the default 10 gateways / 10 blocks, each
+    # gateway appears in exactly two blocks.
+    block_gateways = []
+    for block in range(n_pair_blocks):
+        g1 = gateway_order[block % len(gateway_order)]
+        offset = max(1, len(gateway_order) // 2)
+        g2 = gateway_order[(block + offset) % len(gateway_order)]
+        if g1 == g2:
+            raise RuntimeError("Exp IIIb generated identical block gateways.")
+        block_gateways.append((int(g1), int(g2)))
+
+    shared_relay_gateway: dict[int, int] = {}
+    independent_relay_gateway: dict[int, int] = {}
+    for block in range(n_pair_blocks):
+        pair_a = relay_pairs[2 * block]
+        pair_b = relay_pairs[2 * block + 1]
+        g1, g2 = block_gateways[block]
+        r1, r2 = pair_a
+        r3, r4 = pair_b
+
+        shared_relay_gateway[r1] = g1
+        shared_relay_gateway[r2] = g1
+        shared_relay_gateway[r3] = g2
+        shared_relay_gateway[r4] = g2
+
+        independent_relay_gateway[r1] = g1
+        independent_relay_gateway[r2] = g2
+        independent_relay_gateway[r3] = g1
+        independent_relay_gateway[r4] = g2
+
+    # Reuse relay pairs across focal citizens, but keep every focal's immediate
+    # sources exactly identical across the two path-overlap conditions.
+    focal_to_relays: dict[int, tuple[int, int]] = {}
+    pair_cycle = list(
+        _rng(seed, 4505).permutation(np.arange(len(relay_pairs), dtype=int))
+    )
+    for idx, focal in enumerate(focal_order):
+        pair_idx = int(pair_cycle[idx % len(pair_cycle)])
+        focal_to_relays[int(focal)] = tuple(
+            int(x) for x in relay_pairs[pair_idx]
+        )
+
+    def build(relay_gateway: dict[int, int]) -> dict[int, list[int]]:
+        source_map: dict[int, list[int]] = {}
+        for gateway in gateways:
+            source_map[int(gateway)] = sorted([EXPERT_POS, JAMMER_POS])
+        for relay in relays:
+            source_map[int(relay)] = sorted(
+                [JAMMER_POS, int(relay_gateway[int(relay)])]
+            )
+        for focal in focals:
+            r1, r2 = focal_to_relays[int(focal)]
+            source_map[int(focal)] = sorted([JAMMER_POS, r1, r2])
+        return source_map
+
+    shared = build(shared_relay_gateway)
+    independent = build(independent_relay_gateway)
+
+    roles = {
+        **{int(x): "gateway" for x in gateways},
+        **{int(x): "relay" for x in relays},
+        **{int(x): "focal" for x in focals},
+    }
+
+    return {
+        "shared": shared,
+        "independent": independent,
+        "roles": roles,
+        "gateways": tuple(sorted(gateways)),
+        "relays": tuple(sorted(relays)),
+        "focals": tuple(sorted(focals)),
+        "focal_to_relays": {
+            int(k): tuple(int(x) for x in v)
+            for k, v in focal_to_relays.items()
+        },
+        "shared_relay_gateway": {
+            int(k): int(v) for k, v in shared_relay_gateway.items()
+        },
+        "independent_relay_gateway": {
+            int(k): int(v) for k, v in independent_relay_gateway.items()
+        },
+        "n_gateways": int(n_gateways),
+        "n_relays": int(n_relays),
+        "n_focals": int(n_focals),
+    }
+
+
+def exp3b_focal_corrective_connectivity(
+    source_map: dict[int, list[int]],
+    *,
+    focals: Iterable[int],
+    relays: Iterable[int],
+    gateways: Iterable[int],
+) -> dict[int, int]:
+    """Count internally vertex-disjoint designed focal->Expert paths.
+
+    In the layered Exp IIIb graph each focal has two relay sources. Each relay
+    has exactly one gateway source, and each gateway has direct Expert access.
+    The maximum number of internally vertex-disjoint length-3 corrective paths
+    is therefore the number of distinct gateways reached by the focal's two
+    relay sources: one under the shared-bottleneck treatment and two under the
+    independent-path treatment.
+    """
+    relay_set = set(int(x) for x in relays)
+    gateway_set = set(int(x) for x in gateways)
+    out: dict[int, int] = {}
+    for focal in focals:
+        relay_sources = [
+            int(x)
+            for x in source_map[int(focal)]
+            if int(x) in relay_set
+        ]
+        reached = set()
+        for relay in relay_sources:
+            reached.update(
+                int(x)
+                for x in source_map[int(relay)]
+                if int(x) in gateway_set
+            )
+        out[int(focal)] = len(reached)
+    return out
+
+
 def _homophilous_peers_for_ego(
     *,
     seed: int,
