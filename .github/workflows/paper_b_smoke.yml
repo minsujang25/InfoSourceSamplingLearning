@@ -15,6 +15,7 @@ on:
       - "scripts/run_paper_b_exp3_stress.sh"
       - "scripts/run_paper_b_exp3_floor_sensitivity.sh"
       - "scripts/run_paper_b_exp4_production.sh"
+      - "scripts/run_paper_b_jammer_posterior_validation.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
   pull_request:
