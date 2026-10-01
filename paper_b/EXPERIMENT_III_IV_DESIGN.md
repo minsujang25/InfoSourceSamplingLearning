@@ -133,6 +133,39 @@ Production should proceed only after this stress bundle is inspected. The
 numerical diagnostics are guardrails, not substantive estimands, and no
 trajectory is clipped or winsorized inside the model.
 
+### Numerical posterior-floor sensitivity
+
+The pre-production stress audit showed that many terminal citizen posteriors
+reach the model's numerical SD floor under adaptive peer learning. This is not
+by itself a failure, but it creates a risk that the arbitrary floor value could
+drive the redundancy result.
+
+That possibility was tested on the same 20 flat-prior matched seeds at
+`MIN_SD = 1e-6, 1e-8, 1e-10`.
+
+Across those three specifications:
+
+- the adaptive redundancy effect on MSE was -0.236, -0.216, and -0.213;
+- the adaptive high-minus-low MSE difference under J=1 was -0.240, -0.209,
+  and -0.206;
+- the adaptive high-minus-low MSE difference under J=0 was -0.004, +0.007,
+  and +0.007;
+- the adaptive-minus-frozen activation interaction was -0.115, -0.167, and
+  -0.122;
+- the corresponding RMSE adaptive redundancy effects were -0.167, -0.163,
+  and -0.165;
+- the corresponding MAE adaptive redundancy effects were -0.128, -0.127,
+  and -0.130.
+
+The fraction of terminal citizen states exactly at the numerical floor changed
+substantially, from 0.619 to 0.554 to 0.509, while the main substantive
+contrasts changed little. Maximum terminal MSE and Jammer response diagnostics
+were also essentially unchanged.
+
+The default `MIN_SD=1e-8` is therefore retained as a numerical guardrail and
+is now passed explicitly in the Experiment III production wrapper. The floor
+remains a computational device, not a calibrated behavioral parameter.
+
 ### Factorial structure
 
 ```text
