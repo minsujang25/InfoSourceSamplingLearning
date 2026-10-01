@@ -12,6 +12,7 @@ on:
       - "scripts/run_paper_b_pilot_ucloud.sh"
       - "scripts/run_paper_b_horizon_sensitivity.sh"
       - "scripts/run_paper_b_exp3_production.sh"
+      - "scripts/run_paper_b_exp3_stress.sh"
       - "scripts/run_paper_b_exp4_production.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
@@ -108,6 +109,29 @@ jobs:
             --horizon 8 \
             --workers 2 \
             --output-dir /tmp/paper_b_exp3_smoke
+
+      - name: Stress-test Experiment III asymmetric elite access
+        run: |
+          python -m paper_b.experiments.run_exp3_redundancy \
+            --seeds 2001,2002 \
+            --initial-regimes flat,polarized \
+            --n-citizens 100 \
+            --horizon 200 \
+            --workers 2 \
+            --output-dir /tmp/paper_b_exp3_regression
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(Path("/tmp/paper_b_exp3_regression").glob("exp3_*/exp3_gate.json"))
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["pass"] is True
+          assert gate["max_terminal_mse"] < 1_000_000
+          assert gate["max_abs_jammer_message_mean"] < 1_000_000
+          assert gate["max_jammer_response_gain"] < 0.999999
+          PY
 
       - name: Smoke-test Experiment IV factorial design
         run: |
