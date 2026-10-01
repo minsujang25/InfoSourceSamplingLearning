@@ -25,6 +25,7 @@ The shared substantive model remains under `model/`. Paper B configuration, meas
 - `reliance_mode="adaptive"` lets later credibility audits change the behavioral ranking.
 - `reliance_mode="frozen"` freezes the ranking after the first credibility audit while substantive and credibility beliefs continue to update.
 - Periodic Jammer re-surveillance observes current pre-update citizen beliefs.
+- Jammer response gains are derived from each citizen's current posterior SD, `kappa_i = sigma_i^2/(sigma_i^2+1)`, rather than from cross-sectional segment disagreement; the Jammer still chooses one common message mean per observed segment.
 - `jammer_active=False` neutralizes adversarial content while retaining the same structural Jammer source slot for matched J=0 counterfactuals.
 
 ## Correctness fixes
@@ -35,7 +36,8 @@ The reconstruction intentionally breaks strict legacy-output equivalence where t
 2. source-displacement uncertainty is updated as a standard deviation consistently;
 3. sample-mean precision uses an observation-mean variance rather than treating the raw message SD as the likelihood SD;
 4. citizen message states are staged synchronously;
-5. Jammer re-surveillance uses current beliefs rather than `mu_theta_beliefs[0]`.
+5. Jammer re-surveillance uses current beliefs rather than `mu_theta_beliefs[0]`;
+6. Jammer one-step response gains use citizen posterior uncertainty rather than cross-sectional audience dispersion.
 
 No arbitrary clipping is used.
 
