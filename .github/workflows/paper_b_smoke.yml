@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: paper-b-smoke-${{ github.ref }}
+  group: paper-b-smoke-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
