@@ -68,6 +68,12 @@ for gate_path in sorted(root.glob("minsd_*/exp3_*/exp3_gate.json")):
             "max_terminal_mse": gate["max_terminal_mse"],
             "max_abs_jammer_message_mean": gate["max_abs_jammer_message_mean"],
             "max_jammer_response_gain": gate["max_jammer_response_gain"],
+            "max_individual_response_gain": gate[
+                "max_individual_response_gain"
+            ],
+            "min_jammer_objective_denominator": gate[
+                "min_jammer_objective_denominator"
+            ],
             "adaptive_redundancy_effect_mean": adaptive[
                 "high_minus_low_delta_mse"
             ].mean(),
