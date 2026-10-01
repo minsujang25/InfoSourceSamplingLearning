@@ -86,6 +86,53 @@ The manipulation is deliberately local: it identifies the effect of adding a
 second distinct short corrective route while holding direct elite access and
 peer degree fixed. Longer paths may still exist endogenously.
 
+### Pre-production stress audit
+
+Experiment III intentionally differs from Experiment IV in one important way:
+the Jammer opportunity is universal while direct Expert access is localized to
+a fixed gateway subset. That asymmetry is part of the corrective-route design,
+but the failed pre-production version of Experiment IV showed that asymmetric
+elite access can create explosive feedback in sufficiently separated belief
+states.
+
+Experiment III therefore has a dedicated stress stage before the 500-seed
+primary production run.
+
+The stress design is:
+
+```text
+50 matched seeds
+x 2 prior regimes (flat + polarized)
+x 2 redundancy levels
+x 2 reliance modes
+x 2 Jammer states
+= 800 T=200 simulations
+```
+
+The polarized regime is diagnostic-only. It is not added to the primary Exp III
+estimand; it is used to expose numerical or dynamic instability that may remain
+hidden under the flat production prior.
+
+Run:
+
+```bash
+PAPER_B_WORKERS=12 bash scripts/run_paper_b_exp3_stress.sh
+```
+
+The stress bundle records, in addition to the scientific contrasts:
+
+- maximum terminal MSE;
+- maximum absolute terminal citizen belief;
+- maximum absolute Jammer message mean;
+- maximum Jammer response gain;
+- minimum terminal posterior SD;
+- number and share of terminal citizen posteriors at the numerical SD floor;
+- terminal beliefs, belief/Lambda checkpoints, and Jammer trajectories.
+
+Production should proceed only after this stress bundle is inspected. The
+numerical diagnostics are guardrails, not substantive estimands, and no
+trajectory is clipped or winsorized inside the model.
+
 ### Factorial structure
 
 ```text
