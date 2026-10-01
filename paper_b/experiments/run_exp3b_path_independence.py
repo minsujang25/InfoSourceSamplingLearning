@@ -414,6 +414,31 @@ def _mcse(rows: list[dict], key: str) -> float:
     return float(statistics.stdev(values) / math.sqrt(len(values)))
 
 
+def _trimmed_mean(rows: list[dict], key: str, proportion: float = 0.05) -> float:
+    values = sorted(float(r[key]) for r in rows)
+    if not values:
+        return float("nan")
+    trim = int(math.floor(len(values) * proportion))
+    kept = values[trim : len(values) - trim] if trim else values
+    return float(statistics.fmean(kept))
+
+
+def _share_negative(rows: list[dict], key: str) -> float:
+    values = [float(r[key]) for r in rows]
+    if not values:
+        return float("nan")
+    return float(sum(value < 0.0 for value in values) / len(values))
+
+
+def _leave_one_out_range(rows: list[dict], key: str) -> tuple[float, float]:
+    values = [float(r[key]) for r in rows]
+    if len(values) < 2:
+        return (float("nan"), float("nan"))
+    total = sum(values)
+    means = [(total - value) / (len(values) - 1) for value in values]
+    return float(min(means)), float(max(means))
+
+
 def consolidate(root: Path, manifest: dict) -> dict:
     shards = _read_shards(root)
     runs = [row for shard in shards for row in shard["runs"]]
@@ -549,6 +574,12 @@ def consolidate(root: Path, manifest: dict) -> dict:
 
     adaptive = [r for r in contrasts if r["reliance_mode"] == "adaptive"]
     frozen = [r for r in contrasts if r["reliance_mode"] == "frozen"]
+    adaptive_loo = _leave_one_out_range(
+        adaptive, "independent_minus_shared_delta_mse"
+    )
+    focal_loo = _leave_one_out_range(
+        adaptive, "independent_minus_shared_focal_delta_mse"
+    )
     summary = {
         "n_seeds": len(manifest["seeds"]),
         "adaptive_population_path_effect_mean": _mean(
@@ -560,6 +591,14 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "adaptive_population_path_effect_mcse": _mcse(
             adaptive, "independent_minus_shared_delta_mse"
         ),
+        "adaptive_population_path_effect_trimmed_mean_5pct": _trimmed_mean(
+            adaptive, "independent_minus_shared_delta_mse", 0.05
+        ),
+        "adaptive_population_path_effect_share_negative": _share_negative(
+            adaptive, "independent_minus_shared_delta_mse"
+        ),
+        "adaptive_population_path_effect_loo_min": adaptive_loo[0],
+        "adaptive_population_path_effect_loo_max": adaptive_loo[1],
         "adaptive_population_J1_difference_mean": _mean(
             adaptive, "independent_minus_shared_mse_J1"
         ),
@@ -569,6 +608,20 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "adaptive_focal_path_effect_mean": _mean(
             adaptive, "independent_minus_shared_focal_delta_mse"
         ),
+        "adaptive_focal_path_effect_median": _median(
+            adaptive, "independent_minus_shared_focal_delta_mse"
+        ),
+        "adaptive_focal_path_effect_mcse": _mcse(
+            adaptive, "independent_minus_shared_focal_delta_mse"
+        ),
+        "adaptive_focal_path_effect_trimmed_mean_5pct": _trimmed_mean(
+            adaptive, "independent_minus_shared_focal_delta_mse", 0.05
+        ),
+        "adaptive_focal_path_effect_share_negative": _share_negative(
+            adaptive, "independent_minus_shared_focal_delta_mse"
+        ),
+        "adaptive_focal_path_effect_loo_min": focal_loo[0],
+        "adaptive_focal_path_effect_loo_max": focal_loo[1],
         "adaptive_focal_J1_difference_mean": _mean(
             adaptive, "independent_minus_shared_focal_mse_J1"
         ),
@@ -624,6 +677,23 @@ def consolidate(root: Path, manifest: dict) -> dict:
     )
 
     max_mse = max((float(r["mse_truth"]) for r in runs), default=float("nan"))
+    max_abs_terminal_belief = max(
+        (abs(float(r["terminal_mu_theta"])) for r in terminal_beliefs),
+        default=float("nan"),
+    )
+    min_terminal_sd = min(
+        (float(r["terminal_sd_theta"]) for r in terminal_beliefs),
+        default=float("nan"),
+    )
+    numerical_min_sd = float(manifest["numerical_min_sd"])
+    terminal_sd_floor_count = sum(
+        float(r["terminal_sd_theta"]) <= numerical_min_sd * (1.0 + 1e-12)
+        for r in terminal_beliefs
+    )
+    terminal_sd_floor_share = (
+        terminal_sd_floor_count / len(terminal_beliefs)
+        if terminal_beliefs else float("nan")
+    )
     max_abs_jammer_message = max(
         (abs(float(r["message_mean"])) for r in jammer_strategy),
         default=float("nan"),
@@ -657,6 +727,10 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "focal_connectivity_gate": connectivity_gate,
         "gateway_indegree_balance_gate": gateway_balance_gate,
         "max_terminal_mse": max_mse,
+        "max_abs_terminal_belief": max_abs_terminal_belief,
+        "min_terminal_sd_theta": min_terminal_sd,
+        "terminal_sd_floor_count": terminal_sd_floor_count,
+        "terminal_sd_floor_share": terminal_sd_floor_share,
         "max_abs_jammer_message_mean": max_abs_jammer_message,
         "max_individual_response_gain": max_individual_gain,
         "min_jammer_objective_denominator": min_objective_denom,
