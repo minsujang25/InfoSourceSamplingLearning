@@ -47,6 +47,48 @@ factorial.
 
 Peer degree is fixed at two.
 
+## Posterior-gain Jammer revalidation gate
+
+Because the Jammer response-gain rule changed after the first Exp III production
+audit, the previous Exp III and Exp IV production estimates are not carried
+forward automatically.
+
+Before either full production grid is rerun, execute:
+
+```bash
+PAPER_B_WORKERS=12 bash scripts/run_paper_b_jammer_posterior_validation.sh
+```
+
+The validation bundle contains three matched checks:
+
+```text
+1. Exp III seed 2173, flat prior, T=200
+   -> targeted regression of the former runaway trajectory
+
+2. Exp III seeds 2001-2020, flat prior, T=200
+   -> small matched redundancy/adaptation pilot
+
+3. Exp IV seeds 3001-3020, T=200
+   -> small matched homophily x segregation pilot
+```
+
+Every active-Jammer validation must satisfy the model-implied posterior-gain
+curvature bounds:
+
+```text
+max kappa_i <= 25/26
+min [1 - E(kappa_i^2)] >= 51/676
+```
+
+for the primary initial citizen SD of five.
+
+The validation is used to check that the former runaway channel is removed,
+that the main mechanism contrasts remain non-degenerate, and that T=200 still
+behaves as a stable fixed evaluation horizon under the revised Jammer rule.
+
+Only after this bundle is inspected should the post-revision posterior-floor
+sensitivity and the full 500-seed Exp III/IV grids be launched.
+
 ## Experiment III — corrective-pathway redundancy
 
 ### Question
