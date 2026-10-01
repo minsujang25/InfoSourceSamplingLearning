@@ -31,6 +31,7 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+import model.InfoSourceSamplingLearning as model_module
 from paper_b.experiments.run_local_diagnostic import base_model_config
 from paper_b.experiments.run_matched_pilot import (
     canonical_hash,
@@ -70,6 +71,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--high-group-shift", type=float, default=3.0)
     parser.add_argument("--prior-residual-sd", type=float, default=1.0)
     parser.add_argument("--surveillance-interval", type=int, default=5)
+    parser.add_argument(
+        "--numerical-min-sd",
+        type=float,
+        default=1e-8,
+        help=(
+            "Numerical posterior-SD floor. Primary production uses 1e-8; "
+            "alternative values are for explicit sensitivity analysis only."
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         default="production_results/paper_b_exp4_homophily_segregation",
@@ -159,6 +169,12 @@ def valid_shard(path: Path, design_id: str) -> bool:
 
 def run_block(task: dict) -> dict:
     seed = int(task["seed"])
+
+    numerical_min_sd = float(task["numerical_min_sd"])
+    if not 0.0 < numerical_min_sd < 1.0:
+        raise ValueError("numerical_min_sd must lie in (0,1).")
+    model_module.MIN_SD = numerical_min_sd
+    model_module.MIN_VAR = numerical_min_sd**2
     block_id = task["block_id"]
     design_id = task["design_id"]
     root = Path(task["run_root"])
@@ -585,6 +601,7 @@ def main() -> None:
         "high_prior_group_shift": args.high_group_shift,
         "prior_residual_sd": args.prior_residual_sd,
         "surveillance_interval": args.surveillance_interval,
+        "numerical_min_sd": args.numerical_min_sd,
         "reliance_mode": RELIANCE_MODE,
         "jammer_states": [True, False],
         "jammer_access": "universal structural slot; neutralized under J=0",
@@ -643,6 +660,7 @@ def main() -> None:
                 "high_group_shift": args.high_group_shift,
                 "prior_residual_sd": args.prior_residual_sd,
                 "surveillance_interval": args.surveillance_interval,
+                "numerical_min_sd": args.numerical_min_sd,
             }
         )
 
