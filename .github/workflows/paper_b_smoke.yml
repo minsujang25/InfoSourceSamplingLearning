@@ -31,6 +31,8 @@ on:
       - "scripts/run_paper_b_horizon_sensitivity.sh"
       - "scripts/run_paper_b_exp3_production.sh"
       - "scripts/run_paper_b_exp3b_diagnostic.sh"
+      - "scripts/run_paper_b_exp3b_extension50.sh"
+      - "scripts/run_paper_b_exp3b_cumulative100.sh"
       - "scripts/run_paper_b_exp4_production.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
