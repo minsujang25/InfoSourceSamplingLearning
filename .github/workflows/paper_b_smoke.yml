@@ -33,6 +33,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: paper-b-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   theory-reconstruction:
     runs-on: ubuntu-latest
