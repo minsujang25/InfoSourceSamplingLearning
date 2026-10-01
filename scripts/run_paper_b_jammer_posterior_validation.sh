@@ -73,6 +73,7 @@ python -m paper_b.experiments.run_exp4_homophily_segregation \
   --high-group-shift 3.0 \
   --prior-residual-sd 1.0 \
   --surveillance-interval 5 \
+  --numerical-min-sd 1e-8 \
   --output-dir "${ROOT}/exp4_pilot" \
   --resume
 
