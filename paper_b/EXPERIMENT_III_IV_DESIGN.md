@@ -2,12 +2,13 @@
 
 > **Current model-status note.** The first 500-seed Exp III production audit
 > exposed a rare runaway under the previous Jammer response-gain approximation.
-> That approximation used cross-sectional segment dispersion as Bayesian
-> uncertainty. The canonical model now derives each citizen's response gain from
-> posterior state uncertainty instead; see `paper_b/JAMMER_OBJECTIVE_AUDIT.md`.
-> Consequently, all Exp III and Exp IV quantitative results generated before
-> this Jammer revision are retained only as audit evidence and must be
-> revalidated under the posterior-uncertainty formulation before manuscript use.
+> The canonical model now derives each citizen's response gain from posterior
+> state uncertainty; see `paper_b/JAMMER_OBJECTIVE_AUDIT.md`. The former
+> runaway seed, small matched Exp III/IV pilots, and the post-revision
+> `MIN_SD = 1e-6, 1e-8, 1e-10` sensitivity have all cleared their validation
+> gates. Pre-revision quantitative results remain audit-only. The frozen
+> 500-seed Exp III and Exp IV production grids are now ready to be regenerated
+> under the posterior-uncertainty formulation.
 
 This document freezes the computational design for the two mechanism experiments
 that follow the four-environment baseline and adaptive-vs-frozen comparison.
@@ -86,8 +87,9 @@ The validation is used to check that the former runaway channel is removed,
 that the main mechanism contrasts remain non-degenerate, and that T=200 still
 behaves as a stable fixed evaluation horizon under the revised Jammer rule.
 
-Only after this bundle is inspected should the post-revision posterior-floor
-sensitivity and the full 500-seed Exp III/IV grids be launched.
+The validation bundle has been inspected and passed. The post-revision
+posterior-floor sensitivity has also passed. The full 500-seed Exp III and
+Exp IV grids are therefore cleared for production.
 
 ## Experiment III — corrective-pathway redundancy
 
@@ -186,21 +188,34 @@ trajectory is clipped or winsorized inside the model.
 
 ### Numerical posterior-floor sensitivity
 
-The pre-revision stress audit showed that many terminal citizen posteriors can
-reach the numerical SD floor under adaptive peer learning. A 20-seed
-`MIN_SD = 1e-6, 1e-8, 1e-10` sensitivity under the **older**
-cross-sectional-dispersion Jammer formulation found stable redundancy
-contrasts even though floor incidence changed substantially.
+The post-revision floor sensitivity has been completed under the canonical
+posterior-uncertainty Jammer using the same matched seeds at
+`MIN_SD = 1e-6, 1e-8, 1e-10`.
 
-That result remains useful as an audit of receiver-side numerical behavior, but
-it is no longer sufficient for the canonical model because the revised Jammer
-now uses citizen posterior SDs directly when computing response gains.
+The floor is genuinely active: the terminal floor share changes from 0.621 to
+0.553 to 0.506 in Experiment III and from 0.813 to 0.750 to 0.696 in
+Experiment IV as the floor is lowered.
 
-The default `MIN_SD=1e-8` remains the provisional numerical guardrail during
-posterior-gain validation. Before final production is frozen, the floor
-sensitivity must be rerun under the revised Jammer rule and the substantive
-contrasts must again be shown not to depend materially on the arbitrary floor
-order of magnitude.
+The primary mechanism contrasts are nevertheless stable. In Experiment III,
+the adaptive high-minus-low redundancy effect on MSE is -0.650, -0.622, and
+-0.613, with medians all approximately -0.610. In Experiment IV, the primary
+homophily x prior-segregation MSE interaction is +0.477, +0.479, and +0.462,
+with medians all approximately +0.381.
+
+Seed-level correlations across floor specifications exceed 0.998 for the
+adaptive Exp III redundancy contrast and the Exp IV interaction. Jammer
+curvature diagnostics are identical across floors and satisfy the model-implied
+bounds.
+
+The activation interaction in the ten-seed Exp III calibration sample remains
+small and noisy around zero. This is treated as a Monte Carlo/substantive
+question for the 500-seed production run rather than as a numerical-floor
+artifact.
+
+The default `MIN_SD=1e-8` is therefore retained as the canonical numerical
+guardrail. It is not interpreted as a behavioral parameter.
+
+See `paper_b/POSTERIOR_GAIN_FLOOR_SENSITIVITY_AUDIT.md` for the full audit.
 
 ### Factorial structure
 
