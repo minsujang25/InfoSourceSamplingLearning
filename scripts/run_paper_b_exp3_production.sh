@@ -29,6 +29,7 @@ python -m paper_b.experiments.run_exp3_redundancy \
   --expert-access-share 0.10 \
   --peer-degree 2 \
   --surveillance-interval 5 \
+  --numerical-min-sd 1e-8 \
   --output-dir "${OUTPUT_DIR}" \
   --resume \
   "$@"
