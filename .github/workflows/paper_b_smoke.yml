@@ -13,6 +13,7 @@ on:
       - "scripts/run_paper_b_horizon_sensitivity.sh"
       - "scripts/run_paper_b_exp3_production.sh"
       - "scripts/run_paper_b_exp3_stress.sh"
+      - "scripts/run_paper_b_exp3_floor_sensitivity.sh"
       - "scripts/run_paper_b_exp4_production.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
@@ -109,6 +110,18 @@ jobs:
             --horizon 8 \
             --workers 2 \
             --output-dir /tmp/paper_b_exp3_smoke
+
+      - name: Smoke-test Experiment III numerical SD floor override
+        run: |
+          python -m paper_b.experiments.run_exp3_redundancy \
+            --seeds 1 \
+            --seed-start 2001 \
+            --initial-regimes flat \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 1 \
+            --numerical-min-sd 1e-6 \
+            --output-dir /tmp/paper_b_exp3_floor_smoke
 
       - name: Stress-test Experiment III asymmetric elite access
         run: |
