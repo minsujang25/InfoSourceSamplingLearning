@@ -368,6 +368,16 @@ def consolidate(root: Path, manifest: dict) -> dict:
         ): row
         for row in jammer_rows
     }
+    run_index = {
+        (
+            int(row["seed"]),
+            row["initial_regime"],
+            row["redundancy"],
+            row["reliance_mode"],
+            bool(row["jammer_active"]),
+        ): row
+        for row in runs
+    }
 
     contrasts = []
     activation = []
@@ -384,6 +394,10 @@ def consolidate(root: Path, manifest: dict) -> dict:
         )
         if low is None or high is None:
             continue
+        low_j0 = run_index[(seed, regime, "low", reliance, False)]
+        high_j0 = run_index[(seed, regime, "high", reliance, False)]
+        low_j1 = run_index[(seed, regime, "low", reliance, True)]
+        high_j1 = run_index[(seed, regime, "high", reliance, True)]
         contrasts.append(
             {
                 "seed": seed,
@@ -393,6 +407,24 @@ def consolidate(root: Path, manifest: dict) -> dict:
                 "delta_mse_high_redundancy": high["delta_mse"],
                 "high_minus_low_delta_mse": (
                     high["delta_mse"] - low["delta_mse"]
+                ),
+                "high_minus_low_mse_J0": (
+                    float(high_j0["mse_truth"]) - float(low_j0["mse_truth"])
+                ),
+                "high_minus_low_mse_J1": (
+                    float(high_j1["mse_truth"]) - float(low_j1["mse_truth"])
+                ),
+                "high_minus_low_mae_J0": (
+                    float(high_j0["mae_truth"]) - float(low_j0["mae_truth"])
+                ),
+                "high_minus_low_mae_J1": (
+                    float(high_j1["mae_truth"]) - float(low_j1["mae_truth"])
+                ),
+                "high_minus_low_rmse_J0": (
+                    float(high_j0["rmse_truth"]) - float(low_j0["rmse_truth"])
+                ),
+                "high_minus_low_rmse_J1": (
+                    float(high_j1["rmse_truth"]) - float(low_j1["rmse_truth"])
                 ),
             }
         )
