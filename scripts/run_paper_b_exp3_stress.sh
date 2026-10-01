@@ -59,6 +59,8 @@ for key in (
     "max_abs_terminal_belief",
     "max_abs_jammer_message_mean",
     "max_jammer_response_gain",
+    "max_individual_response_gain",
+    "min_jammer_objective_denominator",
     "min_terminal_sd_theta",
     "terminal_sd_floor_count",
     "terminal_sd_floor_share",
