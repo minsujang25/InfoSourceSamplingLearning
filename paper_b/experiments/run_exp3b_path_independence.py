@@ -699,12 +699,11 @@ def main() -> None:
     seeds = resolve_seeds(args.seeds, args.seed_start)
     if args.workers <= 0:
         raise ValueError("--workers must be positive.")
-    if args.n_citizens != (
-        int(args.n_gateways)
-        + int(args.n_relays)
-        + (int(args.n_citizens) - int(args.n_gateways) - int(args.n_relays))
-    ):
-        raise ValueError("Invalid IIIb role counts.")
+    n_focals = (
+        int(args.n_citizens) - int(args.n_gateways) - int(args.n_relays)
+    )
+    if n_focals <= 0:
+        raise ValueError("Exp IIIb requires at least one focal citizen.")
 
     design = {
         "design_version": 1,
@@ -717,7 +716,7 @@ def main() -> None:
         "n_citizens": args.n_citizens,
         "n_gateways": args.n_gateways,
         "n_relays": args.n_relays,
-        "n_focals": args.n_citizens - args.n_gateways - args.n_relays,
+        "n_focals": n_focals,
         "horizon_T": args.horizon,
         "K": args.k,
         "epsilon": args.epsilon,
