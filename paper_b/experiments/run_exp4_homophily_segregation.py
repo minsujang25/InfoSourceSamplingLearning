@@ -495,6 +495,14 @@ def consolidate(root: Path, manifest: dict) -> dict:
         (float(r["response_gain"]) for r in jammer_strategy),
         default=float("nan"),
     )
+    max_individual_response_gain = max(
+        (float(r["response_gain_max"]) for r in jammer_strategy),
+        default=float("nan"),
+    )
+    min_jammer_objective_denominator = min(
+        (float(r["objective_denominator"]) for r in jammer_strategy),
+        default=float("nan"),
+    )
 
     report = {
         "pass": (
@@ -520,6 +528,8 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "max_terminal_mse": max_mse,
         "max_abs_jammer_message_mean": max_abs_jammer_message,
         "max_jammer_response_gain": max_jammer_response_gain,
+        "max_individual_response_gain": max_individual_response_gain,
+        "min_jammer_objective_denominator": min_jammer_objective_denominator,
     }
     (root / "exp4_gate.json").write_text(
         json.dumps(report, indent=2, sort_keys=True),
