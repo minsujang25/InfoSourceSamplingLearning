@@ -204,6 +204,12 @@ jobs:
           print(json.dumps(gate, indent=2, sort_keys=True))
           assert gate["pass"] is True
           assert gate["focal_connectivity_gate"] is True
+          assert gate["nominal_route_count_gate"] is True
+          assert gate["shared_bottleneck_gate"] is True
+          assert gate["elite_access_match_gate"] is True
+          assert gate["source_degree_match_gate"] is True
+          assert gate["focal_immediate_source_match_gate"] is True
+          assert gate["gateway_indegree_match_gate"] is True
           assert gate["gateway_indegree_balance_gate"] is True
           PY
 
