@@ -45,6 +45,8 @@ from paper_b.structural_designs import (
     EXPERT_POS,
     JAMMER_POS,
     exp3b_focal_corrective_connectivity,
+    exp3b_focal_nominal_corrective_route_count,
+    exp3b_focal_shared_bottleneck_indicator,
     exp3b_path_independence_source_maps,
 )
 
@@ -213,9 +215,14 @@ def run_block(task: dict) -> dict:
     independent = blueprint["independent"]
 
     # Exact matched-counterfactual gates.
-    if _elite_signature(shared) != _elite_signature(independent):
+    shared_elite_signature = _elite_signature(shared)
+    independent_elite_signature = _elite_signature(independent)
+    if shared_elite_signature != independent_elite_signature:
         raise RuntimeError(f"{block_id}: elite access changed across IIIb.")
-    if _source_degree(shared) != _source_degree(independent):
+
+    shared_source_degree = _source_degree(shared)
+    independent_source_degree = _source_degree(independent)
+    if shared_source_degree != independent_source_degree:
         raise RuntimeError(f"{block_id}: per-node source degree changed across IIIb.")
 
     focals = set(int(x) for x in blueprint["focals"])
@@ -227,6 +234,14 @@ def run_block(task: dict) -> dict:
             raise RuntimeError(
                 f"{block_id}: focal immediate neighborhood changed for {focal}."
             )
+    focal_source_hash_shared = canonical_hash(
+        {str(focal): shared[focal] for focal in sorted(focals)}
+    )
+    focal_source_hash_independent = canonical_hash(
+        {str(focal): independent[focal] for focal in sorted(focals)}
+    )
+    if focal_source_hash_shared != focal_source_hash_independent:
+        raise RuntimeError(f"{block_id}: focal source-map hash changed across IIIb.")
 
     shared_indegree = _gateway_relay_indegree(
         blueprint["shared_relay_gateway"], gateways
@@ -253,6 +268,42 @@ def run_block(task: dict) -> dict:
         raise RuntimeError(f"{block_id}: shared-bottleneck connectivity is not one.")
     if any(v != 2 for v in independent_conn.values()):
         raise RuntimeError(f"{block_id}: independent-path connectivity is not two.")
+
+    shared_nominal_routes = exp3b_focal_nominal_corrective_route_count(
+        shared,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    independent_nominal_routes = exp3b_focal_nominal_corrective_route_count(
+        independent,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    if any(v != 2 for v in shared_nominal_routes.values()):
+        raise RuntimeError(f"{block_id}: shared nominal route count is not two.")
+    if any(v != 2 for v in independent_nominal_routes.values()):
+        raise RuntimeError(f"{block_id}: independent nominal route count is not two.")
+
+    shared_bottleneck = exp3b_focal_shared_bottleneck_indicator(
+        shared,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    independent_bottleneck = exp3b_focal_shared_bottleneck_indicator(
+        independent,
+        focals=focals,
+        relays=relays,
+        gateways=gateways,
+    )
+    if any(v != 1 for v in shared_bottleneck.values()):
+        raise RuntimeError(f"{block_id}: shared bottleneck indicator is not one.")
+    if any(v != 0 for v in independent_bottleneck.values()):
+        raise RuntimeError(
+            f"{block_id}: independent bottleneck indicator is not zero."
+        )
 
     base = base_model_config(
         regime="flat",
@@ -336,12 +387,31 @@ def run_block(task: dict) -> dict:
         },
         "shared_relay_gateway": blueprint["shared_relay_gateway"],
         "independent_relay_gateway": blueprint["independent_relay_gateway"],
-        "gateway_relay_indegree": shared_indegree,
+        "gateway_relay_indegree_shared": shared_indegree,
+        "gateway_relay_indegree_independent": independent_indegree,
+        "elite_signature_shared": shared_elite_signature,
+        "elite_signature_independent": independent_elite_signature,
+        "source_degree_hash_shared": canonical_hash(shared_source_degree),
+        "source_degree_hash_independent": canonical_hash(independent_source_degree),
+        "focal_source_hash_shared": focal_source_hash_shared,
+        "focal_source_hash_independent": focal_source_hash_independent,
+        "mean_focal_nominal_routes_shared": float(
+            statistics.fmean(shared_nominal_routes.values())
+        ),
+        "mean_focal_nominal_routes_independent": float(
+            statistics.fmean(independent_nominal_routes.values())
+        ),
         "mean_focal_connectivity_shared": float(
             statistics.fmean(shared_conn.values())
         ),
         "mean_focal_connectivity_independent": float(
             statistics.fmean(independent_conn.values())
+        ),
+        "mean_shared_bottleneck_indicator_shared": float(
+            statistics.fmean(shared_bottleneck.values())
+        ),
+        "mean_shared_bottleneck_indicator_independent": float(
+            statistics.fmean(independent_bottleneck.values())
         ),
         "runs": [r["run"] for r in results],
         "terminal_beliefs": [x for r in results for x in r["beliefs"]],
@@ -412,6 +482,19 @@ def _mcse(rows: list[dict], key: str) -> float:
     if len(values) < 2:
         return float("nan")
     return float(statistics.stdev(values) / math.sqrt(len(values)))
+
+
+def _approx_mc_interval(
+    rows: list[dict],
+    key: str,
+    z: float = 1.96,
+) -> tuple[float, float]:
+    """Approximate Monte Carlo precision interval for a matched-seed mean."""
+    mean = _mean(rows, key)
+    se = _mcse(rows, key)
+    if not math.isfinite(se):
+        return (float("nan"), float("nan"))
+    return (float(mean - z * se), float(mean + z * se))
 
 
 def _trimmed_mean(rows: list[dict], key: str, proportion: float = 0.05) -> float:
@@ -562,11 +645,45 @@ def consolidate(root: Path, manifest: dict) -> dict:
             "mean_focal_connectivity_independent": shard[
                 "mean_focal_connectivity_independent"
             ],
+            "mean_focal_nominal_routes_shared": shard[
+                "mean_focal_nominal_routes_shared"
+            ],
+            "mean_focal_nominal_routes_independent": shard[
+                "mean_focal_nominal_routes_independent"
+            ],
+            "mean_shared_bottleneck_indicator_shared": shard[
+                "mean_shared_bottleneck_indicator_shared"
+            ],
+            "mean_shared_bottleneck_indicator_independent": shard[
+                "mean_shared_bottleneck_indicator_independent"
+            ],
+            "elite_access_match": (
+                shard["elite_signature_shared"]
+                == shard["elite_signature_independent"]
+            ),
+            "source_degree_match": (
+                shard["source_degree_hash_shared"]
+                == shard["source_degree_hash_independent"]
+            ),
+            "focal_immediate_source_match": (
+                shard["focal_source_hash_shared"]
+                == shard["focal_source_hash_independent"]
+            ),
+            "gateway_indegree_match": (
+                shard["gateway_relay_indegree_shared"]
+                == shard["gateway_relay_indegree_independent"]
+            ),
+            "gateway_relay_indegree_vector": json.dumps(
+                shard["gateway_relay_indegree_shared"],
+                sort_keys=True,
+            ),
             "gateway_relay_indegree_min": min(
-                int(v) for v in shard["gateway_relay_indegree"].values()
+                int(v)
+                for v in shard["gateway_relay_indegree_shared"].values()
             ),
             "gateway_relay_indegree_max": max(
-                int(v) for v in shard["gateway_relay_indegree"].values()
+                int(v)
+                for v in shard["gateway_relay_indegree_shared"].values()
             ),
         }
         for shard in shards
@@ -580,17 +697,34 @@ def consolidate(root: Path, manifest: dict) -> dict:
     focal_loo = _leave_one_out_range(
         adaptive, "independent_minus_shared_focal_delta_mse"
     )
+    adaptive_mc95 = _approx_mc_interval(
+        adaptive, "independent_minus_shared_delta_mse"
+    )
+    adaptive_path_mean = _mean(
+        adaptive, "independent_minus_shared_delta_mse"
+    )
+    adaptive_j0_mean = _mean(
+        adaptive, "independent_minus_shared_mse_J0"
+    )
+    adaptive_j1_mean = _mean(
+        adaptive, "independent_minus_shared_mse_J1"
+    )
+    clear_negative_d = bool(
+        math.isfinite(adaptive_mc95[1]) and adaptive_mc95[1] < 0.0
+    )
+    lower_j0_baseline = bool(adaptive_j0_mean < 0.0)
+    lower_j1_loss = bool(adaptive_j1_mean < 0.0)
     summary = {
         "n_seeds": len(manifest["seeds"]),
-        "adaptive_population_path_effect_mean": _mean(
-            adaptive, "independent_minus_shared_delta_mse"
-        ),
+        "adaptive_population_path_effect_mean": adaptive_path_mean,
         "adaptive_population_path_effect_median": _median(
             adaptive, "independent_minus_shared_delta_mse"
         ),
         "adaptive_population_path_effect_mcse": _mcse(
             adaptive, "independent_minus_shared_delta_mse"
         ),
+        "adaptive_population_path_effect_mc95_low": adaptive_mc95[0],
+        "adaptive_population_path_effect_mc95_high": adaptive_mc95[1],
         "adaptive_population_path_effect_trimmed_mean_5pct": _trimmed_mean(
             adaptive, "independent_minus_shared_delta_mse", 0.05
         ),
@@ -599,11 +733,16 @@ def consolidate(root: Path, manifest: dict) -> dict:
         ),
         "adaptive_population_path_effect_loo_min": adaptive_loo[0],
         "adaptive_population_path_effect_loo_max": adaptive_loo[1],
-        "adaptive_population_J1_difference_mean": _mean(
-            adaptive, "independent_minus_shared_mse_J1"
+        "adaptive_population_J1_difference_mean": adaptive_j1_mean,
+        "adaptive_population_J0_difference_mean": adaptive_j0_mean,
+        "precommitted_clear_negative_D_screen": clear_negative_d,
+        "precommitted_lower_J0_baseline_screen": lower_j0_baseline,
+        "precommitted_lower_J1_loss_diagnostic": lower_j1_loss,
+        "precommitted_case_A_main_text_candidate_screen": bool(
+            clear_negative_d and lower_j0_baseline
         ),
-        "adaptive_population_J0_difference_mean": _mean(
-            adaptive, "independent_minus_shared_mse_J0"
+        "precommitted_baseline_penalty_flag": bool(
+            adaptive_path_mean < 0.0 and adaptive_j0_mean > 0.0
         ),
         "adaptive_focal_path_effect_mean": _mean(
             adaptive, "independent_minus_shared_focal_delta_mse"
@@ -675,6 +814,26 @@ def consolidate(root: Path, manifest: dict) -> dict:
         == int(r["gateway_relay_indegree_max"])
         for r in audits
     )
+    nominal_route_gate = all(
+        abs(float(r["mean_focal_nominal_routes_shared"]) - 2.0) <= 1e-12
+        and abs(float(r["mean_focal_nominal_routes_independent"]) - 2.0) <= 1e-12
+        for r in audits
+    )
+    bottleneck_gate = all(
+        abs(float(r["mean_shared_bottleneck_indicator_shared"]) - 1.0) <= 1e-12
+        and abs(
+            float(r["mean_shared_bottleneck_indicator_independent"])
+        ) <= 1e-12
+        for r in audits
+    )
+    elite_access_gate = all(bool(r["elite_access_match"]) for r in audits)
+    source_degree_gate = all(bool(r["source_degree_match"]) for r in audits)
+    focal_source_gate = all(
+        bool(r["focal_immediate_source_match"]) for r in audits
+    )
+    gateway_match_gate = all(
+        bool(r["gateway_indegree_match"]) for r in audits
+    )
 
     max_mse = max((float(r["mse_truth"]) for r in runs), default=float("nan"))
     max_abs_terminal_belief = max(
@@ -715,6 +874,12 @@ def consolidate(root: Path, manifest: dict) -> dict:
             and horizon
             and frozen_gate
             and connectivity_gate
+            and nominal_route_gate
+            and bottleneck_gate
+            and elite_access_gate
+            and source_degree_gate
+            and focal_source_gate
+            and gateway_match_gate
             and gateway_balance_gate
         ),
         "expected_blocks": expected_blocks,
@@ -725,6 +890,12 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "all_runs_fixed_horizon": horizon,
         "frozen_lambda_invariant": frozen_gate,
         "focal_connectivity_gate": connectivity_gate,
+        "nominal_route_count_gate": nominal_route_gate,
+        "shared_bottleneck_gate": bottleneck_gate,
+        "elite_access_match_gate": elite_access_gate,
+        "source_degree_match_gate": source_degree_gate,
+        "focal_immediate_source_match_gate": focal_source_gate,
+        "gateway_indegree_match_gate": gateway_match_gate,
         "gateway_indegree_balance_gate": gateway_balance_gate,
         "max_terminal_mse": max_mse,
         "max_abs_terminal_belief": max_abs_terminal_belief,
@@ -765,6 +936,9 @@ def package(root: Path, design_id: str) -> Path:
             p = root / name
             if p.exists():
                 archive.write(p, arcname=name)
+        plan = Path(__file__).resolve().parents[1] / "EXP3B_DIAGNOSTIC_PLAN.md"
+        if plan.exists():
+            archive.write(plan, arcname="EXP3B_DIAGNOSTIC_PLAN.md")
     return path
 
 
