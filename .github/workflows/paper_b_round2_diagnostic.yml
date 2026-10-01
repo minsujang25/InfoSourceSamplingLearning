@@ -1,0 +1,53 @@
+name: Paper B reconstruction round 2 diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - paper-b-theory-reconstruction
+    paths:
+      - ".github/workflows/paper_b_round2_diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  round2-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validated dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "mesa==3.5.1" \
+            "numpy==1.26.4" \
+            "scipy==1.13.1" \
+            "scikit-learn==1.5.2" \
+            "networkx==3.3"
+
+      - name: Run reconstruction checks
+        run: python -m paper_b.experiments.check_reconstruction
+
+      - name: Run default 80-run matched diagnostic
+        run: |
+          python -m paper_b.experiments.run_local_diagnostic \
+            --output-dir round2_results
+
+      - name: Upload round-2 diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-b-round2-diagnostic
+          path: round2_results/
+          if-no-files-found: error

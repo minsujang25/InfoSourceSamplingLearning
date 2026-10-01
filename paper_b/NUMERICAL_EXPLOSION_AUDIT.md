@@ -2,7 +2,11 @@
 
 ## Status
 
-Root cause identified and reproduced.
+Root cause identified and reproduced in the legacy implementation. The
+theory-aligned reconstruction now applies the standard-deviation-consistent
+posterior update and the reconstruction CI includes a finite multi-period
+stress check. Historical results must still be re-run under the corrected
+model before any old substantive pattern is treated as current evidence.
 
 The failing diagnostic condition is:
 
@@ -148,3 +152,20 @@ branch) and followed by:
 formula is not obviously dimensionally a standard-deviation update. It did not
 drive the observed theta explosion in this case, but it should be audited
 separately before the full Paper B production grid.
+
+
+## Reconstruction implementation note
+
+The reconstructed model also fixes two mechanisms that interacted with the
+legacy explosion but were conceptually separate from it:
+
+- citizen peer-message states are snapshotted at the start of each period, so
+  already-updated citizens cannot contaminate later same-period messages;
+- periodic Jammer re-surveillance reads current pre-update citizen beliefs
+  rather than the initial `mu_theta_beliefs[0]` values.
+
+The source-displacement uncertainty update has likewise been rewritten so a
+posterior variance is not stored or propagated as an SD.
+
+The original table above should therefore be read as a historical bug audit,
+not as a description of current reconstructed dynamics.
