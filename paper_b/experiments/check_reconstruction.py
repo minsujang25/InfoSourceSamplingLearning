@@ -24,6 +24,7 @@ from paper_b.metrics import (
 )
 from paper_b.experiments.consolidate_pilot import _horizon_sensitivity_rows
 from paper_b.structural_designs import (
+    JAMMER_POS,
     balanced_fixed_group_ids,
     exp3_redundancy_source_maps,
     exp3b_focal_corrective_connectivity,
