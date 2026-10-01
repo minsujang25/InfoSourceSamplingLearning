@@ -144,7 +144,10 @@ jobs:
           assert gate["pass"] is True
           assert gate["max_terminal_mse"] < 1_000_000
           assert gate["max_abs_jammer_message_mean"] < 1_000_000
-          assert gate["max_jammer_response_gain"] < 0.999999
+          max_initial_gain = 25.0 / 26.0
+          min_initial_denom = 1.0 - max_initial_gain**2
+          assert gate["max_individual_response_gain"] <= max_initial_gain + 1e-12
+          assert gate["min_jammer_objective_denominator"] >= min_initial_denom - 1e-12
           PY
 
       - name: Regression-test former Experiment III runaway seed
@@ -201,4 +204,8 @@ jobs:
           assert gate["pass"] is True
           assert gate["max_terminal_mse"] < 1_000_000
           assert gate["max_abs_jammer_message_mean"] < 1_000_000
+          max_initial_gain = 25.0 / 26.0
+          min_initial_denom = 1.0 - max_initial_gain**2
+          assert gate["max_individual_response_gain"] <= max_initial_gain + 1e-12
+          assert gate["min_jammer_objective_denominator"] >= min_initial_denom - 1e-12
           PY
