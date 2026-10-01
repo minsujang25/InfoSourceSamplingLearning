@@ -146,6 +146,31 @@ jobs:
           assert gate["max_jammer_response_gain"] < 0.999999
           PY
 
+      - name: Regression-test former Experiment III runaway seed
+        run: |
+          python -m paper_b.experiments.run_exp3_redundancy \
+            --seeds 2173 \
+            --initial-regimes flat \
+            --n-citizens 100 \
+            --horizon 200 \
+            --workers 1 \
+            --output-dir /tmp/paper_b_exp3_seed2173
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(Path("/tmp/paper_b_exp3_seed2173").glob("exp3_*/exp3_gate.json"))
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+
+          max_initial_gain = 25.0 / 26.0
+          min_initial_denom = 1.0 - max_initial_gain**2
+          assert gate["pass"] is True
+          assert gate["max_individual_response_gain"] <= max_initial_gain + 1e-12
+          assert gate["min_jammer_objective_denominator"] >= min_initial_denom - 1e-12
+          PY
+
       - name: Smoke-test Experiment IV factorial design
         run: |
           python -m paper_b.experiments.run_exp4_homophily_segregation \
