@@ -30,5 +30,9 @@ python -m paper_b.experiments.run_exp3b_path_independence \
   --surveillance-interval 5 \
   --numerical-min-sd 1e-8 \
   --output-dir "${OUTPUT_DIR}" \
-  --resume \
-  "$@"
+  --resume
+
+# This wrapper intentionally freezes the first-stage IIIb design at 50 matched
+# seeds. Use the Python module directly only for CI/smoke tests; do not escalate
+# to a 500-seed production until the 50-seed bundle has been classified under
+# the precommitted rule in paper_b/EXP3B_DIAGNOSTIC_PLAN.md.
