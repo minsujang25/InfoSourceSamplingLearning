@@ -328,6 +328,9 @@ def run_block(task: dict) -> dict:
         "prior_segregation_low": s_low,
         "prior_segregation_high": s_high,
         "runs": [r["run"] for r in results],
+        "terminal_beliefs": [
+            x for r in results for x in r["beliefs"]
+        ],
         "belief_checkpoints": [
             x for r in results for x in r["belief_checkpoints"]
         ],
@@ -357,11 +360,7 @@ def _read_shards(root: Path) -> list[dict]:
     return out
 
 
-def _write_csv(path: Path, rows: list[dict]) -> None:
-    import csv
-
-    if not rows:
-        return
+def _csv_columns(rows: list[dict]) -> list[str]:
     columns = []
     seen = set()
     for row in rows:
@@ -369,7 +368,28 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
             if key not in seen:
                 seen.add(key)
                 columns.append(key)
+    return columns
+
+
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    if not rows:
+        return
+    columns = _csv_columns(rows)
     with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_csv_gz(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    if not rows:
+        return
+    columns = _csv_columns(rows)
+    with gzip.open(path, "wt", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
@@ -378,6 +398,9 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 def consolidate(root: Path, manifest: dict) -> dict:
     shards = _read_shards(root)
     runs = [row for shard in shards for row in shard["runs"]]
+    terminal_beliefs = [
+        row for shard in shards for row in shard.get("terminal_beliefs", [])
+    ]
     belief_checkpoints = [
         row for shard in shards for row in shard.get("belief_checkpoints", [])
     ]
@@ -479,6 +502,7 @@ def consolidate(root: Path, manifest: dict) -> dict:
     _write_csv(root / "exp4_cell_disruption.csv", cells)
     _write_csv(root / "exp4_homophily_segregation_interaction.csv", interactions)
     _write_csv(root / "exp4_design_audit.csv", audits)
+    _write_csv_gz(root / "terminal_beliefs.csv.gz", terminal_beliefs)
     _write_csv(root / "belief_checkpoints.csv", belief_checkpoints)
     _write_csv(root / "lambda_checkpoints.csv", lambda_checkpoints)
     _write_csv(root / "jammer_strategy.csv", jammer_strategy)
@@ -502,6 +526,19 @@ def consolidate(root: Path, manifest: dict) -> dict:
     )
 
     max_mse = max((float(r["mse_truth"]) for r in runs), default=float("nan"))
+    min_terminal_sd = min(
+        (float(r["terminal_sd_theta"]) for r in terminal_beliefs),
+        default=float("nan"),
+    )
+    numerical_min_sd = float(manifest["numerical_min_sd"])
+    terminal_sd_floor_count = sum(
+        float(r["terminal_sd_theta"]) <= numerical_min_sd * (1.0 + 1e-12)
+        for r in terminal_beliefs
+    )
+    terminal_sd_floor_share = (
+        terminal_sd_floor_count / len(terminal_beliefs)
+        if terminal_beliefs else float("nan")
+    )
     max_abs_jammer_message = max(
         (abs(float(r["message_mean"])) for r in jammer_strategy),
         default=float("nan"),
@@ -541,6 +578,9 @@ def consolidate(root: Path, manifest: dict) -> dict:
         "homophily_manipulation_gate": h_gate,
         "segregation_manipulation_gate": s_gate,
         "max_terminal_mse": max_mse,
+        "min_terminal_sd_theta": min_terminal_sd,
+        "terminal_sd_floor_count": terminal_sd_floor_count,
+        "terminal_sd_floor_share": terminal_sd_floor_share,
         "max_abs_jammer_message_mean": max_abs_jammer_message,
         "max_jammer_response_gain": max_jammer_response_gain,
         "max_individual_response_gain": max_individual_response_gain,
@@ -562,6 +602,7 @@ def package(root: Path, design_id: str) -> Path:
         "exp4_cell_disruption.csv",
         "exp4_homophily_segregation_interaction.csv",
         "exp4_design_audit.csv",
+        "terminal_beliefs.csv.gz",
         "belief_checkpoints.csv",
         "lambda_checkpoints.csv",
         "jammer_strategy.csv",
