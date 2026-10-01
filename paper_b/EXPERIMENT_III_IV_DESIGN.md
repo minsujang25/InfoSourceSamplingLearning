@@ -1,5 +1,14 @@
 # Experiments III and IV — matched mechanism designs
 
+> **Current model-status note.** The first 500-seed Exp III production audit
+> exposed a rare runaway under the previous Jammer response-gain approximation.
+> That approximation used cross-sectional segment dispersion as Bayesian
+> uncertainty. The canonical model now derives each citizen's response gain from
+> posterior state uncertainty instead; see `paper_b/JAMMER_OBJECTIVE_AUDIT.md`.
+> Consequently, all Exp III and Exp IV quantitative results generated before
+> this Jammer revision are retained only as audit evidence and must be
+> revalidated under the posterior-uncertainty formulation before manuscript use.
+
 This document freezes the computational design for the two mechanism experiments
 that follow the four-environment baseline and adaptive-vs-frozen comparison.
 
