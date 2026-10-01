@@ -101,6 +101,7 @@ def scientific_code_fingerprint() -> str:
         "paper_b/experiments/run_local_diagnostic.py",
         "paper_b/experiments/run_matched_pilot.py",
         "paper_b/experiments/run_exp3b_path_independence.py",
+        "paper_b/EXP3B_DIAGNOSTIC_PLAN.md",
         "environment.yml",
     )
     payload = []
@@ -953,10 +954,15 @@ def main() -> None:
     if n_focals <= 0:
         raise ValueError("Exp IIIb requires at least one focal citizen.")
 
+    plan_path = Path(__file__).resolve().parents[1] / "EXP3B_DIAGNOSTIC_PLAN.md"
+    decision_rule_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+
     design = {
-        "design_version": 1,
+        "design_version": 2,
         "experiment": "IIIb_path_independence_diagnostic",
         "status": "diagnostic_not_precommitted_for_manuscript_inclusion",
+        "decision_rule_document": "paper_b/EXP3B_DIAGNOSTIC_PLAN.md",
+        "decision_rule_sha256": decision_rule_sha256,
         "scientific_code_fingerprint": scientific_code_fingerprint(),
         "software_versions": software_versions(),
         "seeds": seeds,
