@@ -21,7 +21,8 @@ python -m paper_b.experiments.check_reconstruction
 echo
 echo "== Targeted regression: former Exp III runaway seed 2173 =="
 python -m paper_b.experiments.run_exp3_redundancy \
-  --seeds 2173 \
+  --seeds 1 \
+  --seed-start 2173 \
   --initial-regimes flat \
   --n-citizens 100 \
   --horizon 200 \
