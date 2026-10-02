@@ -280,12 +280,18 @@ def evidence_channel_decomposition_rows(model) -> list[dict]:
             "other_peer": 0.0,
             "jammer": 0.0,
         }
-        inclusions = {
-            "expert": 0,
-            "same_peer": 0,
-            "other_peer": 0,
-            "jammer": 0,
-        }
+        class_inclusions = dict(
+            getattr(
+                citizen,
+                "cumulative_evidence_channel_inclusion_periods",
+                {
+                    "expert": 0,
+                    "same_peer": 0,
+                    "other_peer": 0,
+                    "jammer": 0,
+                },
+            )
+        )
 
         for source in citizen.info_source:
             source_type = getattr(source, "type_of_agent", "unknown")
@@ -306,10 +312,6 @@ def evidence_channel_decomposition_rows(model) -> list[dict]:
             precision[channel] += float(
                 citizen.cumulative_evidence_precision.get(source, 0.0)
             )
-            inclusions[channel] += int(
-                citizen.cumulative_evidence_inclusion_periods.get(source, 0)
-            )
-
         total_precision = float(sum(precision.values()))
         state_periods = int(citizen.state_learning_period_count)
 
@@ -330,7 +332,7 @@ def evidence_channel_decomposition_rows(model) -> list[dict]:
                 else 0.0
             )
             row[f"I_{channel}"] = (
-                float(inclusions[channel] / state_periods)
+                float(class_inclusions.get(channel, 0) / state_periods)
                 if state_periods > 0
                 else 0.0
             )
