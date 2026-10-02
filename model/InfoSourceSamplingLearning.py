@@ -169,6 +169,9 @@ class InfoSampleModel(Model):
         same_group_probability: float = 0.9,
         elite_access_probability: float = 0.10,
         jammer_active: bool = True,
+        jammer_regime: str | None = None,
+        peer_evidence_mode: str = "legacy_batch",
+        frozen_ranking_mode: str = "first_audit",
         surveillance_interval: int = 5,
         convergence_tolerance: float = 1e-3,
         stop_on_convergence: bool = False,
@@ -230,7 +233,48 @@ class InfoSampleModel(Model):
         )
         self.structural_source_map = take("structural_source_map", None)
         self.fixed_group_ids = take("fixed_group_ids", None)
-        self.jammer_active = bool(take("jammer_active", jammer_active))
+
+        legacy_jammer_active = bool(take("jammer_active", jammer_active))
+        raw_jammer_regime = take("jammer_regime", jammer_regime)
+        if raw_jammer_regime is None:
+            # Exact backwards compatibility: J=1 -> adaptive; J=0 -> truth clone.
+            raw_jammer_regime = (
+                "adaptive" if legacy_jammer_active else "truth_clone"
+            )
+        self.jammer_regime = str(raw_jammer_regime).lower()
+        valid_jammer_regimes = {
+            "adaptive",
+            "fixed_biased",
+            "truth_clone",
+            "null",
+        }
+        if self.jammer_regime not in valid_jammer_regimes:
+            raise ValueError(
+                "jammer_regime must be one of "
+                f"{sorted(valid_jammer_regimes)}."
+            )
+        # Backwards-facing compatibility flag. New validity experiments should
+        # inspect jammer_regime rather than infer scientific meaning from this.
+        self.jammer_active = self.jammer_regime == "adaptive"
+
+        self.peer_evidence_mode = str(
+            take("peer_evidence_mode", peer_evidence_mode)
+        ).lower()
+        if self.peer_evidence_mode not in {"legacy_batch", "source_posterior"}:
+            raise ValueError(
+                "peer_evidence_mode must be 'legacy_batch' or "
+                "'source_posterior'."
+            )
+
+        self.frozen_ranking_mode = str(
+            take("frozen_ranking_mode", frozen_ranking_mode)
+        ).lower()
+        if self.frozen_ranking_mode not in {"first_audit", "pre_disruption"}:
+            raise ValueError(
+                "frozen_ranking_mode must be 'first_audit' or "
+                "'pre_disruption'."
+            )
+
         self.surveillance_interval = max(
             1, int(take("surveillance_interval", surveillance_interval))
         )
@@ -268,6 +312,8 @@ class InfoSampleModel(Model):
         self._apply_fixed_group_ids()
         self._build_structural_sources()
         self._initialize_citizen_source_priors()
+        if self.frozen_ranking_mode == "pre_disruption":
+            self._initialize_pre_disruption_rankings()
         self.update_network()
 
     @staticmethod
@@ -601,6 +647,17 @@ class InfoSampleModel(Model):
     def _initialize_citizen_source_priors(self) -> None:
         for citizen in self.citizens:
             citizen.initialize_source_priors(citizen.info_source)
+
+    def _initialize_pre_disruption_rankings(self) -> None:
+        """Initialize a common receiver-side ranking before adversarial action.
+
+        This initialization does not update substantive beliefs and does not
+        consume the model RNG stream. It uses baseline source states only:
+        Expert at truth, peers at their initial posterior means, and the Jammer
+        at its underlying position before strategic optimization.
+        """
+        for citizen in self.citizens:
+            citizen.initialize_pre_disruption_ranking()
 
     def update_network(self) -> None:
         """Store the fixed structural opportunity network A."""
@@ -1035,7 +1092,7 @@ class DisruptiveJammer(InfoAgents):
         means every period and did not use the Jammer's underlying position in
         the documented deviation-cost objective.
         """
-        if not self.model.jammer_active:
+        if self.model.jammer_regime != "adaptive":
             self._current_msg_param = {}
             self._strategy_state = {}
             return []
@@ -1065,7 +1122,8 @@ class DisruptiveJammer(InfoAgents):
         if n_req <= 0:
             return []
 
-        if not self.model.jammer_active:
+        regime = self.model.jammer_regime
+        if regime == "truth_clone":
             return list(
                 self.model.rng.normal(
                     self.model.state_of_the_world,
@@ -1073,6 +1131,25 @@ class DisruptiveJammer(InfoAgents):
                     int(n_req),
                 )
             )
+        if regime == "fixed_biased":
+            return list(
+                self.model.rng.normal(
+                    self.mu_theta,
+                    1.0,
+                    int(n_req),
+                )
+            )
+        if regime == "null":
+            # Preserve the RNG draw count of a unit-variance source but discard
+            # substantive content. The structural slot remains present.
+            self.model.rng.normal(
+                self.model.state_of_the_world,
+                1.0,
+                int(n_req),
+            )
+            return []
+        if regime != "adaptive":
+            raise RuntimeError(f"Unhandled jammer_regime={regime!r}.")
 
         if not self.citizen_intel:
             self.prepare_for_period()
@@ -1174,6 +1251,40 @@ class Citizen(InfoAgents):
         self.model.rng.shuffle(order)
         self.credibility_ranked_sources = order
 
+    def _null_last(self, ranking: list[InfoAgents]) -> list[InfoAgents]:
+        if self.model.jammer_regime != "null":
+            return list(ranking)
+        non_null = [
+            source for source in ranking
+            if source.type_of_agent != "disruptivejammer"
+        ]
+        null_sources = [
+            source for source in ranking
+            if source.type_of_agent == "disruptivejammer"
+        ]
+        return non_null + null_sources
+
+    def initialize_pre_disruption_ranking(self) -> None:
+        """Set a common deterministic ranking before period-0 disruption."""
+        prior_mu = float(self.mu_theta_beliefs[-1])
+        prior_var = max(float(self.sd_theta_beliefs[-1]) ** 2, MIN_VAR)
+        scored = []
+        for source in self.info_source:
+            source_mu = float(source.mu_theta)
+            if self.model.comparison_rule == "z_stat_comparison":
+                source_var = max(float(source.sd_theta) ** 2, MIN_VAR)
+                score = abs(source_mu - prior_mu) / math.sqrt(
+                    prior_var + source_var
+                )
+            else:
+                score = abs(source_mu - prior_mu)
+            scored.append((float(score), int(source.pos), source))
+        scored.sort(key=lambda item: (item[0], item[1]))
+        ranking = self._null_last([source for _, _, source in scored])
+        self.credibility_ranked_sources = list(ranking)
+        if self.model.reliance_mode == "frozen":
+            self.frozen_credibility_ranked_sources = list(ranking)
+
     def learn_theta_or_delta(self) -> int:
         return int(self.model.rng.choice(CHOICE_OPTION, p=self.model.p_pair))
 
@@ -1182,8 +1293,10 @@ class Citizen(InfoAgents):
             self.model.reliance_mode == "frozen"
             and self.frozen_credibility_ranked_sources is not None
         ):
-            return list(self.frozen_credibility_ranked_sources)
-        return list(self.credibility_ranked_sources)
+            return self._null_last(
+                list(self.frozen_credibility_ranked_sources)
+            )
+        return self._null_last(list(self.credibility_ranked_sources))
 
     def _equal_audit_requests(self, sources: list[InfoAgents]) -> tuple[list[int], np.ndarray]:
         n = len(sources)
@@ -1266,6 +1379,44 @@ class Citizen(InfoAgents):
         post_mu = post_var * (
             prior_mu / prior_var + obs_mu / obs_mean_var
         )
+        return float(post_mu), math.sqrt(max(float(post_var), MIN_VAR))
+
+    def bayesian_update_theta_from_sources(self) -> tuple[float, float]:
+        """Update theta from source-level likelihoods.
+
+        Citizen-peer repetitions in one period do not divide the sender's
+        posterior variance by the number of repeated statements. Repetition
+        can reveal the peer's current stated location but does not create
+        independent epistemic evidence beyond that posterior.
+
+        Elite messages remain conditionally independent draws, so their known
+        message variance is divided by the number of draws from that source.
+        """
+        prior_mu = float(self.mu_theta_beliefs[-1])
+        prior_var = max(float(self.sd_theta_beliefs[-1]) ** 2, MIN_VAR)
+        precision = 1.0 / prior_var
+        weighted_mean = prior_mu / prior_var
+        used = 0
+
+        for source, messages in zip(self._sample_order, self.sampled_msgs):
+            values = np.asarray(list(messages), dtype=float)
+            if values.size == 0:
+                continue
+            obs_mu = float(values.mean())
+            if source.type_of_agent == "citizen":
+                obs_var = max(float(source._message_sd) ** 2, MIN_VAR)
+            else:
+                source_var = max(float(source._message_sd) ** 2, MIN_VAR)
+                obs_var = max(source_var / int(values.size), MIN_VAR)
+            precision += 1.0 / obs_var
+            weighted_mean += obs_mu / obs_var
+            used += 1
+
+        if used == 0:
+            return prior_mu, math.sqrt(prior_var)
+
+        post_var = 1.0 / precision
+        post_mu = post_var * weighted_mean
         return float(post_mu), math.sqrt(max(float(post_var), MIN_VAR))
 
     # Compatibility wrappers used by archived diagnostics.
@@ -1361,11 +1512,11 @@ class Citizen(InfoAgents):
         if self.model.comparison_rule == "delta_comparison":
             new_mu, new_sd = self.learn_delta()
             scores = {source: abs(new_mu[source]) for source in self.info_source}
-            ranking = self._rank_from_scores(scores)
+            ranking = self._null_last(self._rank_from_scores(scores))
             return new_mu, new_sd, ranking
 
         scores = self.calculate_z_stat()
-        ranking = self._rank_from_scores(scores)
+        ranking = self._null_last(self._rank_from_scores(scores))
         return None, None, ranking
 
     def stage_period(self) -> None:
@@ -1391,10 +1542,16 @@ class Citizen(InfoAgents):
                 for message in source_messages
             ]
             if flat_messages:
-                (
-                    self._pending_mu_theta,
-                    self._pending_sd_theta,
-                ) = self.bayesian_update_theta(flat_messages)
+                if self.model.peer_evidence_mode == "source_posterior":
+                    (
+                        self._pending_mu_theta,
+                        self._pending_sd_theta,
+                    ) = self.bayesian_update_theta_from_sources()
+                else:
+                    (
+                        self._pending_mu_theta,
+                        self._pending_sd_theta,
+                    ) = self.bayesian_update_theta(flat_messages)
 
     def commit_pending_update(self) -> None:
         self.mu_theta = float(self._pending_mu_theta)
@@ -1418,6 +1575,7 @@ class Citizen(InfoAgents):
             self.credibility_ranked_sources = list(self._pending_ranking)
             if (
                 self.model.reliance_mode == "frozen"
+                and self.model.frozen_ranking_mode == "first_audit"
                 and self.frozen_credibility_ranked_sources is None
             ):
                 self.frozen_credibility_ranked_sources = list(
