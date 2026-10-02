@@ -8,6 +8,7 @@ on:
       - paper-b-validity-redesign
       - paper-b-canonical-production
       - paper-b-measurement-audit
+      - paper-b-mechanism-robustness
     paths:
       - "model/**"
       - "paper_b/**"
@@ -27,6 +28,8 @@ on:
       - "scripts/run_paper_b_canonical_production.sh"
       - "scripts/run_paper_b_measurement_phase_a.sh"
       - "scripts/run_paper_b_measurement_audit.sh"
+      - "scripts/run_paper_b_expert_rank_audit.sh"
+      - "scripts/run_paper_b_mechanism_robustness.sh"
       - "scripts/run_paper_b_jammer_posterior_validation.sh"
       - "scripts/run_paper_b_posterior_gain_floor_sensitivity.sh"
       - "environment.yml"
@@ -47,6 +50,8 @@ on:
       - "scripts/run_paper_b_canonical_production.sh"
       - "scripts/run_paper_b_measurement_phase_a.sh"
       - "scripts/run_paper_b_measurement_audit.sh"
+      - "scripts/run_paper_b_expert_rank_audit.sh"
+      - "scripts/run_paper_b_mechanism_robustness.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
 
@@ -278,6 +283,56 @@ jobs:
           bundles = list(
               Path("/tmp/paper_b_measurement_smoke").glob(
                   "measurement_*/paper_b_measurement_review_*.zip"
+              )
+          )
+          assert len(bundles) == 1, bundles
+          PY
+
+      - name: Check mechanism robustness
+        run: python -m paper_b.experiments.check_mechanism_robustness
+
+      - name: Smoke-test Expert-rank reconstruction
+        run: |
+          python -m paper_b.experiments.analyze_expert_rank_mechanism \
+            --seeds 2 \
+            --seed-start 6001 \
+            --n-citizens 20 \
+            --output-dir /tmp/paper_b_expert_rank_smoke
+          test -f /tmp/paper_b_expert_rank_smoke/paper_b_expert_rank_audit.zip
+
+      - name: Smoke-test mechanism robustness runner
+        run: |
+          python -m paper_b.experiments.run_mechanism_robustness \
+            --seeds 1 \
+            --seed-start 6001 \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 1 \
+            --blocks epsilon,degree \
+            --output-dir /tmp/paper_b_mechanism_smoke
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(
+              Path("/tmp/paper_b_mechanism_smoke").glob(
+                  "mechanism_*/mechanism_gate.json"
+              )
+          )
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["observed_runs"] == 24
+          assert gate["expected_runs"] == 24
+          assert gate["degree_nested_extension_pass"] is True
+          assert gate["all_terminal_mse_finite"] is True
+          assert gate["all_fixed_horizon"] is True
+          assert gate["null_last_share_minimum"] == 1.0
+          assert gate["canonical_base_match"] is False
+
+          bundles = list(
+              Path("/tmp/paper_b_mechanism_smoke").glob(
+                  "mechanism_*/paper_b_mechanism_review_*.zip"
               )
           )
           assert len(bundles) == 1, bundles
