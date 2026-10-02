@@ -658,7 +658,18 @@ def main() -> None:
         ):
             zf.write(root / name, arcname=name)
         # Checkpoint evidence is compact enough to include for review.
-        zf.write(root / "evidence_checkpoints.csv.gz", arcname="evidence_checkpoints.csv.gz")
+        zf.write(
+            root / "evidence_checkpoints.csv.gz",
+            arcname="evidence_checkpoints.csv.gz",
+        )
+        zf.write(
+            root / "lambda_checkpoints.csv.gz",
+            arcname="lambda_checkpoints.csv.gz",
+        )
+        zf.write(
+            root / "belief_checkpoints.csv.gz",
+            arcname="belief_checkpoints.csv.gz",
+        )
         zf.write(plan_path, arcname="MEASUREMENT_AUDIT_PLAN.md")
 
     print(json.dumps(gate, indent=2, sort_keys=True, allow_nan=True))
