@@ -52,6 +52,7 @@ from paper_b.metrics import (
     theory_metrics,
 )
 from paper_b.measurement import (
+    acquisition_comparable_metrics,
     evidence_precision_network_metrics,
     null_last_share,
 )
@@ -357,6 +358,11 @@ def run_condition(
                     "period": completed_period,
                     "horizon_step": completed_period + 1,
                     "null_last_share": null_last_share(model),
+                    **acquisition_comparable_metrics(
+                        model,
+                        period=completed_period,
+                        gateway_positions=gateway_positions,
+                    ),
                     **evidence_precision_network_metrics(
                         model,
                         gateway_positions=gateway_positions,
@@ -383,6 +389,12 @@ def run_condition(
     metrics["reliance_hhi"] = reliance_hhi(model)
     metrics.update(
         dominant_reliance_skeleton_metrics(
+            model,
+            gateway_positions=gateway_positions,
+        )
+    )
+    metrics.update(
+        acquisition_comparable_metrics(
             model,
             gateway_positions=gateway_positions,
         )
