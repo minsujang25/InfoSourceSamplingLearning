@@ -207,7 +207,7 @@ def _nested_degree_check(
         for ego in d2[h]:
             peers2 = [x for x in d2[h][ego] if int(x) >= 2]
             peers4 = [x for x in d4[h][ego] if int(x) >= 2]
-            if peers4[:2] != peers2:
+            if not set(peers2).issubset(set(peers4)):
                 return False
     return True
 
