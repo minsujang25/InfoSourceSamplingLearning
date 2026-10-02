@@ -538,7 +538,7 @@ def main() -> None:
     # Verify the d=4 design is a nested extension of d=2 before any production.
     nested_pass = True
     if "degree" in blocks:
-        for seed in seeds[: min(10, len(seeds))]:
+        for seed in seeds:
             groups = balanced_fixed_group_ids(
                 seed=seed,
                 n_citizens=int(args.n_citizens),
