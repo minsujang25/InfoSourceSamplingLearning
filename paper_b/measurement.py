@@ -37,6 +37,7 @@ def structural_uniform_metrics(
     with at least one citizen peer.
     """
     incoming = Counter()
+    peer_incoming = Counter()
     homophily_values = []
     gateway_peer_values = []
 
@@ -55,6 +56,8 @@ def structural_uniform_metrics(
             incoming[source] += weight
 
         peers = [source for source in sources if source >= CITIZEN_START]
+        for source in peers:
+            peer_incoming[source] += weight
         if peers and group_ids is not None:
             same = sum(
                 int(group_ids[int(ego)] == group_ids[int(source)])
@@ -77,6 +80,16 @@ def structural_uniform_metrics(
         else []
     )
 
+    peer_total = float(sum(peer_incoming.values()))
+    peer_shares = (
+        sorted(
+            (float(value / peer_total) for value in peer_incoming.values()),
+            reverse=True,
+        )
+        if peer_total > 0.0
+        else []
+    )
+
     gateway_total_share = math.nan
     if gateways is not None and total > 0.0:
         gateway_total_share = float(
@@ -94,6 +107,13 @@ def structural_uniform_metrics(
         ),
         "A_uniform_incoming_top5_share": (
             float(sum(shares[:5])) if shares else math.nan
+        ),
+        "A_uniform_peer_incoming_hhi": (
+            float(sum(share * share for share in peer_shares))
+            if peer_shares else math.nan
+        ),
+        "A_uniform_peer_incoming_top5_share": (
+            float(sum(peer_shares[:5])) if peer_shares else math.nan
         ),
         "A_uniform_gateway_total_share": gateway_total_share,
         "A_uniform_gateway_peer_conditional_share": (
@@ -132,6 +152,93 @@ def _source_class(source) -> str:
     if source_type == "citizen":
         return "peer"
     return str(source_type)
+
+
+def _lambda_weights(
+    model,
+    *,
+    period: int | None = None,
+) -> dict[int, dict[int, float]]:
+    if period is None:
+        out = {}
+        for citizen in model.citizens:
+            weights = getattr(
+                citizen,
+                "substantive_reliance_probabilities",
+                getattr(citizen, "reliance_probabilities", {}),
+            )
+            out[int(citizen.pos)] = {
+                int(source.pos): float(weight)
+                for source, weight in weights.items()
+            }
+        return out
+
+    history = getattr(model, "reliance_history", [])
+    if period < 0 or period >= len(history):
+        return {}
+
+    out: dict[int, dict[int, float]] = {}
+    for record in history[int(period)]:
+        ego = int(record["ego"])
+        out.setdefault(ego, {})[int(record["source"])] = float(
+            record["expected_reliance"]
+        )
+    return out
+
+
+def acquisition_comparable_metrics(
+    model,
+    *,
+    period: int | None = None,
+    gateway_positions: set[int] | None = None,
+) -> dict:
+    """Lambda metrics directly comparable to A and W on peer-conditioned mass."""
+    weights = _lambda_weights(model, period=period)
+    agents_by_pos = {int(agent.pos): agent for agent in model.agents}
+
+    peer_incoming = Counter()
+    peer_total = 0.0
+    gateway_peer_mass = 0.0
+    gateways = (
+        {int(x) for x in gateway_positions}
+        if gateway_positions is not None
+        else set()
+    )
+
+    for ego_weights in weights.values():
+        for source_pos, weight in ego_weights.items():
+            source = agents_by_pos.get(int(source_pos))
+            if getattr(source, "type_of_agent", None) != "citizen":
+                continue
+            value = float(weight)
+            peer_total += value
+            peer_incoming[int(source_pos)] += value
+            if int(source_pos) in gateways:
+                gateway_peer_mass += value
+
+    peer_shares = (
+        sorted(
+            (float(value / peer_total) for value in peer_incoming.values()),
+            reverse=True,
+        )
+        if peer_total > 0.0
+        else []
+    )
+
+    return {
+        "Lambda_gateway_peer_conditional_share": (
+            float(gateway_peer_mass / peer_total)
+            if peer_total > 0.0 and gateway_positions is not None
+            else math.nan
+        ),
+        "Lambda_peer_incoming_hhi": (
+            float(sum(share * share for share in peer_shares))
+            if peer_shares else math.nan
+        ),
+        "Lambda_peer_incoming_top5_share": (
+            float(sum(peer_shares[:5])) if peer_shares else math.nan
+        ),
+    }
 
 
 def evidence_precision_weights(model) -> dict[int, dict[int, float]]:
@@ -194,6 +301,13 @@ def evidence_precision_network_metrics(
     homophily_values = []
     peer_mass_values = []
     incoming = Counter()
+    peer_incoming = Counter()
+    gateway_peer_precision = 0.0
+    gateway_set = (
+        {int(x) for x in gateway_positions}
+        if gateway_positions is not None
+        else set()
+    )
 
     for ego, ego_weights in weights.items():
         peer_mass = 0.0
@@ -206,6 +320,9 @@ def evidence_precision_network_metrics(
 
             if source_class == "peer":
                 peer_mass += float(weight)
+                peer_incoming[int(source_pos)] += float(weight)
+                if int(source_pos) in gateway_set:
+                    gateway_peer_precision += float(weight)
                 if getattr(source, "group_id", None) == citizen_group.get(ego):
                     same_peer_mass += float(weight)
 
@@ -224,11 +341,20 @@ def evidence_precision_network_metrics(
         else []
     )
 
+    peer_total_incoming = float(sum(peer_incoming.values()))
+    peer_shares = (
+        sorted(
+            (float(value / peer_total_incoming) for value in peer_incoming.values()),
+            reverse=True,
+        )
+        if peer_total_incoming > 0.0
+        else []
+    )
+
     gateway_share = math.nan
     if gateway_positions is not None and total_incoming > 0.0:
-        gateways = {int(x) for x in gateway_positions}
         gateway_share = float(
-            sum(incoming.get(node, 0.0) for node in gateways)
+            sum(incoming.get(node, 0.0) for node in gateway_set)
             / total_incoming
         )
 
@@ -304,7 +430,19 @@ def evidence_precision_network_metrics(
         "W_incoming_top5_share": (
             float(sum(shares[:5])) if shares else math.nan
         ),
+        "W_peer_incoming_hhi": (
+            float(sum(share * share for share in peer_shares))
+            if peer_shares else math.nan
+        ),
+        "W_peer_incoming_top5_share": (
+            float(sum(peer_shares[:5])) if peer_shares else math.nan
+        ),
         "W_gateway_incoming_share": gateway_share,
+        "W_gateway_peer_conditional_share": (
+            float(gateway_peer_precision / peer_total_incoming)
+            if gateway_positions is not None and peer_total_incoming > 0.0
+            else math.nan
+        ),
         "W_dominant_expert_reach_share": float(
             fate_counts["expert"] / n
         ),
