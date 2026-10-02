@@ -1220,6 +1220,13 @@ class Citizen(InfoAgents):
         self.num_request: list[int] = []
 
         self.sampled_msgs: list[list[float]] = []
+
+        # Passive measurement-only bookkeeping for the cumulative
+        # evidence-precision network W. These values never enter sampling,
+        # ranking, message generation, or posterior arithmetic.
+        self.cumulative_evidence_precision: dict[InfoAgents, float] = {}
+        self._pending_evidence_precision: dict[InfoAgents, float] = {}
+
         # substantive_reliance_probabilities is the theory object Lambda_t:
         # the rank-based policy that would govern state-learning acquisition.
         # sampling_probabilities is the policy actually used in the current
@@ -1250,6 +1257,8 @@ class Citizen(InfoAgents):
 
         self.mu_delta = {s: mu_values[i] for i, s in enumerate(sources)}
         self.sd_delta = {s: sd_values[i] for i, s in enumerate(sources)}
+        self.cumulative_evidence_precision = {s: 0.0 for s in sources}
+        self._pending_evidence_precision = {}
         self.mu_delta_beliefs = [mu_values.copy()]
         self.sd_delta_beliefs = [sd_values.copy()]
 
@@ -1420,8 +1429,12 @@ class Citizen(InfoAgents):
             else:
                 source_var = max(float(source._message_sd) ** 2, MIN_VAR)
                 obs_var = max(source_var / int(values.size), MIN_VAR)
-            precision += 1.0 / obs_var
+            added_precision = 1.0 / obs_var
+            precision += added_precision
             weighted_mean += obs_mu / obs_var
+            # Passive logger: this is exactly the source precision term
+            # already entering the frozen Gaussian update.
+            self._pending_evidence_precision[source] = float(added_precision)
             used += 1
 
         if used == 0:
@@ -1541,6 +1554,7 @@ class Citizen(InfoAgents):
         self._pending_mu_delta = None
         self._pending_sd_delta = None
         self._pending_ranking = None
+        self._pending_evidence_precision = {}
 
         if self.theta_or_delta == 1:
             new_mu_delta, new_sd_delta, ranking = self.decide_optimal_arm()
@@ -1570,6 +1584,12 @@ class Citizen(InfoAgents):
         self.sd_theta = max(float(self._pending_sd_theta), MIN_SD)
         self.mu_theta_beliefs.append(self.mu_theta)
         self.sd_theta_beliefs.append(self.sd_theta)
+
+        for source, value in self._pending_evidence_precision.items():
+            self.cumulative_evidence_precision[source] = float(
+                self.cumulative_evidence_precision.get(source, 0.0)
+                + float(value)
+            )
 
         if self._pending_mu_delta is not None:
             self.mu_delta = dict(self._pending_mu_delta)
