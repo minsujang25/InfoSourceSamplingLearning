@@ -287,6 +287,10 @@ class InfoSampleModel(Model):
         self.single_message_variance = float(
             take("single_message_variance", single_message_variance)
         )
+        # Snapshot the module-level numerical guardrail at model creation so
+        # diagnostics can report floor incidence even when experiments change
+        # MIN_SD before constructing a run.
+        self.numerical_min_sd = float(MIN_SD)
 
         self.period = 0
         self.p = 1.0
