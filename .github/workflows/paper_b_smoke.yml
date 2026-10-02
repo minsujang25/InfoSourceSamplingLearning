@@ -291,6 +291,11 @@ jobs:
       - name: Check mechanism robustness
         run: python -m paper_b.experiments.check_mechanism_robustness
 
+      - name: Validate mechanism wrapper environment parsing
+        run: |
+          PAPER_B_WORKERS=12 PAPER_B_VALIDATE_ONLY=1 \
+            bash scripts/run_paper_b_mechanism_robustness.sh
+
       - name: Smoke-test Expert-rank reconstruction
         run: |
           python -m paper_b.experiments.analyze_expert_rank_mechanism \
