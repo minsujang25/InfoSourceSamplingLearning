@@ -392,7 +392,11 @@ def run_condition(
 
     run_row = {
         **common,
-        "condition": _condition_label(reliance_mode, jammer_active),
+        "condition": (
+            _condition_label(reliance_mode, jammer_active)
+            if jammer_regime is None
+            else f"{reliance_mode}__{model.jammer_regime}"
+        ),
         "steps_run": int(model.steps),
         "terminal_horizon_T": int(model.max_steps),
         "first_convergence_period": model.first_convergence_period,
