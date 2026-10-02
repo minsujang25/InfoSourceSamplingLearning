@@ -162,9 +162,9 @@ This adds:
 
 new simulations.
 
-The d=4 structural generator must preserve the first two peer selections from
-the d=2 design for each matched seed/ego, then add two further peers from the
-same common-random-number stream.
+The d=4 structural generator must preserve the two peers present in the d=2
+design for each matched seed/ego and add two further peers from the same
+common-random-number construction.
 
 Working analytical motivation:
 
