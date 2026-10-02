@@ -10,6 +10,7 @@ on:
       - paper-b-measurement-audit
       - paper-b-mechanism-robustness
       - paper-b-w-channel-decomposition
+      - paper-b-epsilon-degree-phase
     paths:
       - "model/**"
       - "paper_b/**"
@@ -32,6 +33,7 @@ on:
       - "scripts/run_paper_b_expert_rank_audit.sh"
       - "scripts/run_paper_b_mechanism_robustness.sh"
       - "scripts/run_paper_b_w_channel_decomposition.sh"
+      - "scripts/run_paper_b_epsilon_degree_phase.sh"
       - "scripts/run_paper_b_jammer_posterior_validation.sh"
       - "scripts/run_paper_b_posterior_gain_floor_sensitivity.sh"
       - "environment.yml"
@@ -55,6 +57,7 @@ on:
       - "scripts/run_paper_b_expert_rank_audit.sh"
       - "scripts/run_paper_b_mechanism_robustness.sh"
       - "scripts/run_paper_b_w_channel_decomposition.sh"
+      - "scripts/run_paper_b_epsilon_degree_phase.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
 
@@ -392,6 +395,14 @@ jobs:
           )
           assert len(bundles) == 1, bundles
           PY
+
+      - name: Check epsilon-degree phase
+        run: python -m paper_b.experiments.check_epsilon_degree_phase
+
+      - name: Validate epsilon-degree wrapper environment parsing
+        run: |
+          PAPER_B_WORKERS=12 PAPER_B_VALIDATE_ONLY=1 \
+            bash scripts/run_paper_b_epsilon_degree_phase.sh
 
       - name: Smoke-test local diagnostic runner
         run: |
