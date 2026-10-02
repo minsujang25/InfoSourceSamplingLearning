@@ -226,7 +226,7 @@ For each key matched contrast (C), compare (C_{199}) and (C_{399}).
 
 A contrast is classified as stable if:
 
-1. the signs agree (or both are effectively zero), and
+1. the signs agree, treating any \(|C|<0.005\) as effectively zero, and
 2. either
    [
    rac{|C_{399}-C_{199}|}{max(|C_{199}|,10^{-6})}<0.25
