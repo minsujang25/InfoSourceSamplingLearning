@@ -3,6 +3,7 @@ set -euo pipefail
 
 WORKERS="${PAPER_B_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
 CANONICAL_ROOT="${PAPER_B_CANONICAL_ROOT:-production_results/paper_b_canonical/production_c9d09daad143}"
+MEASUREMENT_ROOT="${PAPER_B_MEASUREMENT_ROOT:-production_results/paper_b_measurement_audit/measurement_087afed31ccf}"
 MECHANISM_ROOT="${PAPER_B_MECHANISM_ROOT:-production_results/paper_b_mechanism_robustness/mechanism_9b5c35506618}"
 OUTPUT_DIR="${PAPER_B_PHASE_OUTPUT:-production_results/paper_b_epsilon_degree_phase}"
 
@@ -19,6 +20,7 @@ fi
 if [[ "${PAPER_B_VALIDATE_ONLY:-0}" == "1" ]]; then
   echo "PAPER_B_WORKERS=${WORKERS}"
   echo "Canonical reference: ${CANONICAL_ROOT}"
+  echo "Measurement reference: ${MEASUREMENT_ROOT}"
   echo "Mechanism reference: ${MECHANISM_ROOT}"
   echo "Wrapper validation: PASS"
   exit 0
@@ -48,6 +50,7 @@ python -m paper_b.experiments.run_epsilon_degree_phase \
   --prior-residual-sd 1.0 \
   --numerical-min-sd 1e-8 \
   --canonical-root "${CANONICAL_ROOT}" \
+  --measurement-root "${MEASUREMENT_ROOT}" \
   --mechanism-root "${MECHANISM_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --resume
