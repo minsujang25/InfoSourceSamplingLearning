@@ -21,6 +21,7 @@ on:
       - "scripts/run_paper_b_exp4_production.sh"
       - "scripts/run_paper_b_validity_redesign.sh"
       - "scripts/run_paper_b_social_evidence_floor.sh"
+      - "scripts/run_paper_b_final_calibration.sh"
       - "scripts/run_paper_b_jammer_posterior_validation.sh"
       - "scripts/run_paper_b_posterior_gain_floor_sensitivity.sh"
       - "environment.yml"
@@ -37,6 +38,7 @@ on:
       - "scripts/run_paper_b_exp3b_extension50.sh"
       - "scripts/run_paper_b_exp3b_cumulative100.sh"
       - "scripts/run_paper_b_exp4_production.sh"
+      - "scripts/run_paper_b_final_calibration.sh"
       - "environment.yml"
       - ".github/workflows/paper_b_smoke.yml"
 
@@ -142,6 +144,41 @@ jobs:
           bundles = list(
               Path("/tmp/paper_b_social_floor_smoke").glob(
                   "social_floor_*/paper_b_social_floor_*_shareable.zip"
+              )
+          )
+          assert len(bundles) == 1, bundles
+          PY
+
+      - name: Check final calibration design
+        run: python -m paper_b.experiments.check_final_calibration
+
+      - name: Smoke-test final calibration runner
+        run: |
+          python -m paper_b.experiments.run_final_calibration \
+            --seeds 1 \
+            --seed-start 5101 \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 1 \
+            --output-dir /tmp/paper_b_final_calibration_smoke
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(
+              Path("/tmp/paper_b_final_calibration_smoke").glob(
+                  "final_calibration_*/final_calibration_gate.json"
+              )
+          )
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["pass"] is True
+          assert gate["observed_runs"] == 20
+          assert gate["horizon_evaluable"] is False
+          bundles = list(
+              Path("/tmp/paper_b_final_calibration_smoke").glob(
+                  "final_calibration_*/paper_b_final_calibration_*_shareable.zip"
               )
           )
           assert len(bundles) == 1, bundles
