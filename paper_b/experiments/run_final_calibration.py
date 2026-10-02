@@ -758,7 +758,7 @@ def _adaptive_frozen_rows(contrast_rows: list[dict]) -> list[dict]:
     return out
 
 
-def _sign(value: float, zero_tol: float = 1e-12) -> int:
+def _sign(value: float, zero_tol: float = 0.005) -> int:
     if abs(float(value)) <= zero_tol:
         return 0
     return 1 if value > 0 else -1
