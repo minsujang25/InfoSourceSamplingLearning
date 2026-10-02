@@ -58,6 +58,13 @@ REDUNDANCY_LEVELS = ("low", "high")
 PRIMARY_SENDERS = ("null", "fixed_biased")
 TERMINAL_PERIOD = 399
 HORIZON_SENSITIVITY_PERIOD = 199
+CANONICAL_SEEDS = tuple(range(6001, 6501))
+CANONICAL_HORIZON = 400
+CANONICAL_N_CITIZENS = 100
+CANONICAL_EPSILON = 0.05
+CANONICAL_CREDIT = 20
+CANONICAL_K = 1
+CANONICAL_SURVEILLANCE_INTERVAL = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -604,8 +611,17 @@ def _contrast_row(
     }
 
 
-def _compute_contrasts_from_index(idx: dict, *, checkpoint: bool) -> list[dict]:
-    periods = (HORIZON_SENSITIVITY_PERIOD, TERMINAL_PERIOD) if checkpoint else (TERMINAL_PERIOD,)
+def _compute_contrasts_from_index(
+    idx: dict,
+    *,
+    checkpoint: bool,
+    terminal_period: int,
+) -> list[dict]:
+    periods = (
+        (HORIZON_SENSITIVITY_PERIOD, TERMINAL_PERIOD)
+        if checkpoint and terminal_period >= TERMINAL_PERIOD
+        else (() if checkpoint else (int(terminal_period),))
+    )
     seeds = sorted({int(key[1]) for key in idx})
     out = []
 
@@ -1294,10 +1310,36 @@ def main() -> None:
         and not bad_sender_cross
     )
 
+    canonical_design_match = bool(
+        tuple(seeds) == CANONICAL_SEEDS
+        and tuple(experiments) == ("III", "IV")
+        and int(args.horizon) == CANONICAL_HORIZON
+        and int(args.n_citizens) == CANONICAL_N_CITIZENS
+        and math.isclose(float(args.epsilon), CANONICAL_EPSILON)
+        and int(args.credit) == CANONICAL_CREDIT
+        and int(args.k) == CANONICAL_K
+        and int(args.surveillance_interval) == CANONICAL_SURVEILLANCE_INTERVAL
+        and math.isclose(float(args.numerical_min_sd), 1e-8)
+        and math.isclose(float(args.expert_access_share), 0.10)
+        and math.isclose(float(args.low_homophily), 0.50)
+        and math.isclose(float(args.high_homophily), 0.90)
+        and math.isclose(float(args.high_group_shift), 3.0)
+        and math.isclose(float(args.prior_residual_sd), 1.0)
+    )
+
     merged = _merge_checkpoints(belief_rows, lambda_rows)
-    run_contrasts = _compute_contrasts_from_index(_run_index(runs), checkpoint=False)
+    terminal_period = int(args.horizon) - 1
+    run_contrasts = _compute_contrasts_from_index(
+        _run_index(runs),
+        checkpoint=False,
+        terminal_period=terminal_period,
+    )
     checkpoint_idx = _checkpoint_index(merged)
-    checkpoint_contrasts = _compute_contrasts_from_index(checkpoint_idx, checkpoint=True)
+    checkpoint_contrasts = _compute_contrasts_from_index(
+        checkpoint_idx,
+        checkpoint=True,
+        terminal_period=terminal_period,
+    )
     adaptive_frozen = _adaptive_frozen_contrasts(checkpoint_contrasts + run_contrasts)
     contrast_summary = _contrast_summaries(run_contrasts + adaptive_frozen)
     horizon_contrast_summary = _contrast_summaries(checkpoint_contrasts)
@@ -1309,7 +1351,7 @@ def main() -> None:
     terminal_floor_values = [
         float(r["posterior_sd_floor_share"])
         for r in merged
-        if int(r["period"]) == TERMINAL_PERIOD
+        if int(r["period"]) == terminal_period
         and math.isfinite(float(r.get("posterior_sd_floor_share", math.nan)))
     ]
     median_terminal_floor = (
@@ -1337,6 +1379,10 @@ def main() -> None:
         "bad_frozen_ranking_rows": len(bad_frozen),
         "forbidden_frozen_adaptive_jammer_rows": len(bad_sender_cross),
         "median_terminal_posterior_floor_share": median_terminal_floor,
+        "canonical_design_match": canonical_design_match,
+        "canonical_production_eligible": bool(
+            numerical_pass and canonical_design_match
+        ),
     }
     (run_root / "production_gate.json").write_text(
         json.dumps(gate, indent=2, sort_keys=True, allow_nan=True),
