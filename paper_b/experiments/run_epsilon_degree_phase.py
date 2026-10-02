@@ -77,6 +77,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--measurement-root",
+        default=(
+            "production_results/paper_b_measurement_audit/"
+            "measurement_087afed31ccf"
+        ),
+    )
+    parser.add_argument(
         "--mechanism-root",
         default=(
             "production_results/paper_b_mechanism_robustness/"
@@ -285,7 +292,7 @@ def _all_specs() -> list[tuple[float, int]]:
     ]
 
 
-def _canonical_reference_rows(root: Path) -> list[dict]:
+def _measurement_reference_rows(root: Path) -> list[dict]:
     path = root / "runs.csv"
     if not path.exists():
         raise FileNotFoundError(path)
@@ -299,7 +306,7 @@ def _canonical_reference_rows(root: Path) -> list[dict]:
         row["epsilon"] = 0.05
         row["peer_degree"] = 2
         row["spec_label"] = "epsilon_0.05_d2"
-        row["phase_source"] = "canonical"
+        row["phase_source"] = "measurement"
         out.append(row)
     return out
 
@@ -665,9 +672,11 @@ def main() -> None:
         )
 
     new_rows = _normalize_new_rows(payloads)
-    canonical_rows = _canonical_reference_rows(Path(args.canonical_root))
+    measurement_rows = _measurement_reference_rows(
+        Path(args.measurement_root)
+    )
     mechanism_rows = _mechanism_reference_rows(Path(args.mechanism_root))
-    combined = canonical_rows + mechanism_rows + new_rows
+    combined = measurement_rows + mechanism_rows + new_rows
 
     validation = _validate_combined(combined, seeds)
     finite = all(
