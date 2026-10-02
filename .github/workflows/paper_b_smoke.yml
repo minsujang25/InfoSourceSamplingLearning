@@ -232,6 +232,15 @@ jobs:
       - name: Check measurement audit
         run: python -m paper_b.experiments.check_measurement_audit
 
+      - name: Smoke-test Phase A measurement analysis
+        run: |
+          PROD_ROOT="$(find /tmp/paper_b_production_smoke -maxdepth 1 -type d -name 'production_*' | head -n 1)"
+          test -n "$PROD_ROOT"
+          python -m paper_b.experiments.analyze_measurement_phase_a \
+            --production-root "$PROD_ROOT" \
+            --output-dir /tmp/paper_b_measurement_phase_a_smoke
+          test -f /tmp/paper_b_measurement_phase_a_smoke/paper_b_measurement_phase_a.zip
+
       - name: Smoke-test passive measurement rerun
         run: |
           python -m paper_b.experiments.run_measurement_audit \
