@@ -268,7 +268,7 @@ def pilot_checkpoint_periods(model: InfoSampleModel) -> list[int]:
     # 200 executed periods and period 399 is the state after 400 periods.
     values = set(checkpoint_periods(model))
     values.update(
-        p for p in (100, 150, 199, 299, 399)
+        p for p in (2, 100, 150, 199, 299, 399)
         if p <= last
     )
     return sorted(values)
