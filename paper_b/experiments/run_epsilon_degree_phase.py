@@ -27,11 +27,17 @@ from pathlib import Path
 
 import numpy as np
 
+from model.InfoSourceSamplingLearning import recursive_rank_probabilities
 from paper_b.experiments.run_mechanism_robustness import (
     _run_spec_seed,
     _valid_shard,
 )
 from paper_b.experiments.run_matched_pilot import canonical_hash
+from paper_b.structural_designs import (
+    balanced_fixed_group_ids,
+    exp4_homophily_source_maps,
+    exp4_initial_beliefs,
+)
 
 
 EPSILONS = (0.02, 0.05, 0.10, 0.20, 0.30)
@@ -110,6 +116,147 @@ def _write_csv(path: Path, rows: list[dict], *, gzip_output: bool = False) -> No
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _degree_nesting_check(
+    *,
+    seeds: list[int],
+    n_citizens: int,
+    low_homophily: float,
+    high_homophily: float,
+) -> bool:
+    for seed in seeds:
+        groups = balanced_fixed_group_ids(
+            seed=seed,
+            n_citizens=n_citizens,
+        )
+        maps = {}
+        for degree in DEGREES:
+            maps[degree] = exp4_homophily_source_maps(
+                seed=seed,
+                n_citizens=n_citizens,
+                group_ids=groups,
+                peer_degree=degree,
+                low_homophily=low_homophily,
+                high_homophily=high_homophily,
+            )
+        for h in H_LEVELS:
+            for ego in maps[2][h]:
+                peers2 = {
+                    int(x)
+                    for x in maps[2][h][ego]
+                    if int(x) >= 2
+                }
+                for degree in (3, 4):
+                    peers = {
+                        int(x)
+                        for x in maps[degree][h][ego]
+                        if int(x) >= 2
+                    }
+                    if not peers2.issubset(peers):
+                        return False
+    return True
+
+
+def _initial_rank_surface(
+    *,
+    seeds: list[int],
+    n_citizens: int,
+    credit: int,
+    low_homophily: float,
+    high_homophily: float,
+    high_group_shift: float,
+    prior_residual_sd: float,
+) -> list[dict]:
+    raw = defaultdict(list)
+
+    for seed in seeds:
+        groups = balanced_fixed_group_ids(
+            seed=seed,
+            n_citizens=n_citizens,
+        )
+        initial_by_s = {
+            s: exp4_initial_beliefs(
+                seed=seed,
+                n_citizens=n_citizens,
+                group_ids=groups,
+                segregation=s,
+                high_group_shift=high_group_shift,
+                residual_sd=prior_residual_sd,
+            )
+            for s in S_LEVELS
+        }
+
+        for degree in DEGREES:
+            blueprint = exp4_homophily_source_maps(
+                seed=seed,
+                n_citizens=n_citizens,
+                group_ids=groups,
+                peer_degree=degree,
+                low_homophily=low_homophily,
+                high_homophily=high_homophily,
+            )
+            for h in H_LEVELS:
+                for s in S_LEVELS:
+                    initial = initial_by_s[s]
+                    for ego, sources in blueprint[h].items():
+                        prior = float(initial[int(ego)])
+                        non_null = [
+                            int(source)
+                            for source in sources
+                            if int(source) != 1
+                        ]
+                        scored = []
+                        for source in non_null:
+                            source_mu = float(initial[source])
+                            scored.append(
+                                (
+                                    abs(source_mu - prior),
+                                    int(source),
+                                )
+                            )
+                        scored.sort()
+                        ranking = [source for _, source in scored]
+                        expert_rank = ranking.index(0) + 1
+                        raw[(degree, h, s)].append(expert_rank)
+
+    out = []
+    for degree in DEGREES:
+        num_sources = degree + 2
+        for epsilon in EPSILONS:
+            probs = recursive_rank_probabilities(
+                num_sources,
+                epsilon,
+            )
+            for h in H_LEVELS:
+                for s in S_LEVELS:
+                    ranks = raw[(degree, h, s)]
+                    row = {
+                        "epsilon": epsilon,
+                        "peer_degree": degree,
+                        "homophily_level": h,
+                        "segregation_level": s,
+                        "n_citizen_seed": len(ranks),
+                        "mean_expert_rank": float(np.mean(ranks)),
+                        "mean_expert_acquisition_probability": float(
+                            np.mean([probs[rank - 1] for rank in ranks])
+                        ),
+                        "mean_expert_inclusion_probability": float(
+                            np.mean(
+                                [
+                                    1.0
+                                    - (1.0 - probs[rank - 1]) ** credit
+                                    for rank in ranks
+                                ]
+                            )
+                        ),
+                    }
+                    for rank in range(1, num_sources):
+                        row[f"expert_rank_{rank}_share"] = float(
+                            np.mean([value == rank for value in ranks])
+                        )
+                    out.append(row)
+    return out
 
 
 def _new_specs() -> list[dict]:
@@ -392,6 +539,27 @@ def main() -> None:
         and math.isclose(float(args.numerical_min_sd), 1e-8)
     )
 
+    nesting_pass = _degree_nesting_check(
+        seeds=seeds,
+        n_citizens=int(args.n_citizens),
+        low_homophily=float(args.low_homophily),
+        high_homophily=float(args.high_homophily),
+    )
+    if not nesting_pass:
+        raise RuntimeError(
+            "d=3/d=4 opportunity sets do not preserve canonical d=2 peers."
+        )
+
+    initial_rank_surface = _initial_rank_surface(
+        seeds=seeds,
+        n_citizens=int(args.n_citizens),
+        credit=int(args.credit),
+        low_homophily=float(args.low_homophily),
+        high_homophily=float(args.high_homophily),
+        high_group_shift=float(args.high_group_shift),
+        prior_residual_sd=float(args.prior_residual_sd),
+    )
+
     specs = _new_specs()
     design = {
         "purpose": "Paper B epsilon-by-degree phase diagram",
@@ -422,6 +590,7 @@ def main() -> None:
         "frozen_ranking_mode": "pre_disruption",
         "sender_regime": "null",
         "canonical_base_match": canonical_match,
+        "degree_nesting_pass": nesting_pass,
     }
     design_id = canonical_hash(design)[:12]
     design["design_id"] = design_id
@@ -509,12 +678,14 @@ def main() -> None:
     gate = {
         "pass": bool(
             canonical_match
+            and nesting_pass
             and validation["pass"]
             and finite
             and len(new_rows) == expected_new_runs
         ),
         "design_id": design_id,
         "canonical_base_match": canonical_match,
+        "degree_nesting_pass": nesting_pass,
         "new_spec_count": len(specs),
         "observed_new_shards": len(payloads),
         "expected_new_shards": expected_shards,
@@ -534,6 +705,7 @@ def main() -> None:
 
     _write_csv(root / "combined_runs.csv.gz", combined, gzip_output=True)
     _write_csv(root / "cell_summary.csv", cells)
+    _write_csv(root / "initial_expert_rank_surface.csv", initial_rank_surface)
     _write_csv(root / "seed_contrasts.csv.gz", seed_contrasts, gzip_output=True)
     _write_csv(root / "contrast_summary.csv", contrasts)
 
@@ -545,6 +717,7 @@ def main() -> None:
             "phase_gate.json",
             "cell_summary.csv",
             "contrast_summary.csv",
+            "initial_expert_rank_surface.csv",
         ):
             zf.write(root / name, arcname=name)
         zf.write(plan, arcname="EPSILON_DEGREE_PHASE_PLAN.md")
