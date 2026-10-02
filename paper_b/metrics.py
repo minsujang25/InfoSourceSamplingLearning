@@ -453,6 +453,213 @@ def reliance_checkpoint_metrics(
     }
 
 
+def posterior_precision_checkpoint(model, period: int) -> dict:
+    """Posterior-SD diagnostics after the requested zero-indexed period."""
+    cs = citizens(model)
+    if not cs:
+        return {
+            "period": int(period),
+            "posterior_sd_mean": math.nan,
+            "posterior_sd_median": math.nan,
+            "posterior_sd_min": math.nan,
+            "posterior_sd_max": math.nan,
+            "posterior_sd_floor_share": math.nan,
+        }
+
+    history_index = int(period) + 1
+    values = []
+    for citizen in cs:
+        history = getattr(citizen, "sd_theta_beliefs", [])
+        if history_index >= len(history):
+            continue
+        values.append(float(history[history_index]))
+
+    if not values:
+        return {
+            "period": int(period),
+            "posterior_sd_mean": math.nan,
+            "posterior_sd_median": math.nan,
+            "posterior_sd_min": math.nan,
+            "posterior_sd_max": math.nan,
+            "posterior_sd_floor_share": math.nan,
+        }
+
+    arr = np.asarray(values, dtype=float)
+    floor = float(getattr(model, "numerical_min_sd", 1e-8))
+    return {
+        "period": int(period),
+        "posterior_sd_mean": float(arr.mean()),
+        "posterior_sd_median": float(np.median(arr)),
+        "posterior_sd_min": float(arr.min()),
+        "posterior_sd_max": float(arr.max()),
+        "posterior_sd_floor_share": float(
+            np.mean(arr <= floor * (1.0 + 1e-12))
+        ),
+    }
+
+
+def dominant_reliance_skeleton_metrics(
+    model,
+    period: int | None = None,
+    gateway_positions: set[int] | None = None,
+) -> dict:
+    """Summarize the top-ranked effective-reliance skeleton.
+
+    Each citizen contributes one outgoing edge to the structurally available
+    source with the largest expected-reliance weight. Following those edges
+    ends at the Expert, the Jammer, or a citizen-only directed cycle. This is a
+    behavioral dependence skeleton, not a causal influence graph.
+    """
+    history = getattr(model, "reliance_history", [])
+    if not history:
+        return {
+            "dominant_expert_reach_share": math.nan,
+            "dominant_jammer_reach_share": math.nan,
+            "dominant_citizen_cycle_share": math.nan,
+            "dominant_same_group_cycle_share": math.nan,
+            "dominant_cycle_mean_size": math.nan,
+            "dominant_cycle_max_size": math.nan,
+            "dominant_two_cycle_attractor_share": math.nan,
+            "dominant_threeplus_cycle_attractor_share": math.nan,
+            "effective_incoming_hhi": math.nan,
+            "effective_incoming_max_share": math.nan,
+            "effective_incoming_top5_share": math.nan,
+            "gateway_incoming_reliance_share": math.nan,
+        }
+
+    p = len(history) - 1 if period is None else int(period)
+    weights = _period_expected_weights(model, p)
+    if not weights:
+        return {
+            "dominant_expert_reach_share": math.nan,
+            "dominant_jammer_reach_share": math.nan,
+            "dominant_citizen_cycle_share": math.nan,
+            "dominant_same_group_cycle_share": math.nan,
+            "dominant_cycle_mean_size": math.nan,
+            "dominant_cycle_max_size": math.nan,
+            "dominant_two_cycle_attractor_share": math.nan,
+            "dominant_threeplus_cycle_attractor_share": math.nan,
+            "effective_incoming_hhi": math.nan,
+            "effective_incoming_max_share": math.nan,
+            "effective_incoming_top5_share": math.nan,
+            "gateway_incoming_reliance_share": math.nan,
+        }
+
+    agents_by_pos = {
+        int(agent.pos): agent for agent in _agents(model)
+    }
+    citizen_positions = {int(c.pos) for c in citizens(model)}
+    top = {
+        int(ego): _top_source(ego_weights)
+        for ego, ego_weights in weights.items()
+    }
+
+    fate_counts = Counter()
+    unique_cycles: set[frozenset[int]] = set()
+    same_group_cycle_egos = 0
+    two_cycle_egos = 0
+    threeplus_cycle_egos = 0
+
+    for ego in sorted(citizen_positions):
+        current = ego
+        path: list[int] = []
+        index: dict[int, int] = {}
+        fate = "unresolved"
+        cycle_nodes: list[int] = []
+
+        while True:
+            if current in index:
+                cycle_nodes = path[index[current]:]
+                fate = "cycle"
+                unique_cycles.add(frozenset(cycle_nodes))
+                break
+            if current not in citizen_positions:
+                agent = agents_by_pos.get(current)
+                source_type = getattr(agent, "type_of_agent", None)
+                if source_type == "infoprovider":
+                    fate = "expert"
+                elif source_type == "disruptivejammer":
+                    fate = "jammer"
+                break
+            nxt = top.get(current)
+            if nxt is None:
+                break
+            index[current] = len(path)
+            path.append(current)
+            next_agent = agents_by_pos.get(int(nxt))
+            next_type = getattr(next_agent, "type_of_agent", None)
+            if next_type == "infoprovider":
+                fate = "expert"
+                break
+            if next_type == "disruptivejammer":
+                fate = "jammer"
+                break
+            current = int(nxt)
+
+        fate_counts[fate] += 1
+        if fate == "cycle" and cycle_nodes:
+            ego_group = getattr(agents_by_pos.get(ego), "group_id", None)
+            cycle_groups = {
+                getattr(agents_by_pos.get(node), "group_id", None)
+                for node in cycle_nodes
+            }
+            if len(cycle_groups) == 1 and ego_group in cycle_groups:
+                same_group_cycle_egos += 1
+            if len(cycle_nodes) == 2:
+                two_cycle_egos += 1
+            if len(cycle_nodes) >= 3:
+                threeplus_cycle_egos += 1
+
+    n = max(len(citizen_positions), 1)
+    cycle_sizes = [len(cycle) for cycle in unique_cycles]
+
+    incoming = Counter()
+    for ego_weights in weights.values():
+        for source, weight in ego_weights.items():
+            incoming[int(source)] += float(weight)
+    total_incoming = float(sum(incoming.values()))
+    shares = (
+        sorted(
+            [float(value / total_incoming) for value in incoming.values()],
+            reverse=True,
+        )
+        if total_incoming > 0.0
+        else []
+    )
+    incoming_hhi = float(sum(share * share for share in shares)) if shares else math.nan
+    gateway_share = math.nan
+    if gateway_positions is not None and total_incoming > 0.0:
+        gateways = {int(x) for x in gateway_positions}
+        gateway_share = float(
+            sum(incoming.get(node, 0.0) for node in gateways) / total_incoming
+        )
+
+    return {
+        "dominant_expert_reach_share": float(fate_counts["expert"] / n),
+        "dominant_jammer_reach_share": float(fate_counts["jammer"] / n),
+        "dominant_citizen_cycle_share": float(fate_counts["cycle"] / n),
+        "dominant_same_group_cycle_share": float(same_group_cycle_egos / n),
+        "dominant_cycle_mean_size": (
+            float(np.mean(cycle_sizes)) if cycle_sizes else 0.0
+        ),
+        "dominant_cycle_max_size": (
+            int(max(cycle_sizes)) if cycle_sizes else 0
+        ),
+        "dominant_two_cycle_attractor_share": float(two_cycle_egos / n),
+        "dominant_threeplus_cycle_attractor_share": float(
+            threeplus_cycle_egos / n
+        ),
+        "effective_incoming_hhi": incoming_hhi,
+        "effective_incoming_max_share": (
+            float(shares[0]) if shares else math.nan
+        ),
+        "effective_incoming_top5_share": (
+            float(sum(shares[:5])) if shares else math.nan
+        ),
+        "gateway_incoming_reliance_share": gateway_share,
+    }
+
+
 def theory_metrics(model) -> dict:
     """One compact run-level snapshot aligned with the manuscript theory."""
     out = {}
