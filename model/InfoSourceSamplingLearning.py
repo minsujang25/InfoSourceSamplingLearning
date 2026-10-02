@@ -171,6 +171,7 @@ class InfoSampleModel(Model):
         jammer_active: bool = True,
         jammer_regime: str | None = None,
         peer_evidence_mode: str = "legacy_batch",
+        tau_social: float = 0.0,
         frozen_ranking_mode: str = "first_audit",
         surveillance_interval: int = 5,
         convergence_tolerance: float = 1e-3,
@@ -265,6 +266,9 @@ class InfoSampleModel(Model):
                 "peer_evidence_mode must be 'legacy_batch' or "
                 "'source_posterior'."
             )
+        self.tau_social = float(take("tau_social", tau_social))
+        if not math.isfinite(self.tau_social) or self.tau_social < 0.0:
+            raise ValueError("tau_social must be a finite nonnegative number.")
 
         self.frozen_ranking_mode = str(
             take("frozen_ranking_mode", frozen_ranking_mode)
@@ -1408,7 +1412,11 @@ class Citizen(InfoAgents):
                 continue
             obs_mu = float(values.mean())
             if source.type_of_agent == "citizen":
-                obs_var = max(float(source._message_sd) ** 2, MIN_VAR)
+                obs_var = max(
+                    float(source._message_sd) ** 2
+                    + float(self.model.tau_social) ** 2,
+                    MIN_VAR,
+                )
             else:
                 source_var = max(float(source._message_sd) ** 2, MIN_VAR)
                 obs_var = max(source_var / int(values.size), MIN_VAR)
