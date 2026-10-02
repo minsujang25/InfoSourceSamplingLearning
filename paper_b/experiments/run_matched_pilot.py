@@ -44,6 +44,8 @@ from paper_b.experiments.run_local_diagnostic import (
     topology_summary,
 )
 from paper_b.metrics import (
+    dominant_reliance_skeleton_metrics,
+    posterior_precision_checkpoint,
     realized_flow_composition,
     reliance_checkpoint_metrics,
     reliance_hhi,
@@ -309,6 +311,10 @@ def run_condition(
     design_id: str,
     block_id: str,
     save_edge_log: bool,
+    jammer_regime: str | None = None,
+    peer_evidence_mode: str = "legacy_batch",
+    frozen_ranking_mode: str = "first_audit",
+    gateway_positions: set[int] | None = None,
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -318,8 +324,13 @@ def run_condition(
             "jammer_active": bool(jammer_active),
             "surveil_ability": int(k),
             "stop_on_convergence": False,
+            "peer_evidence_mode": peer_evidence_mode,
+            "frozen_ranking_mode": frozen_ranking_mode,
         }
     )
+
+    if jammer_regime is not None:
+        config["jammer_regime"] = str(jammer_regime)
 
     model = InfoSampleModel(model_attribute=config, rng=seed)
     structure_fp = structural_fingerprint(model)
@@ -346,6 +357,22 @@ def run_condition(
     metrics = theory_metrics(model)
     metrics.update(realized_flow_composition(model))
     metrics["reliance_hhi"] = reliance_hhi(model)
+    metrics.update(
+        dominant_reliance_skeleton_metrics(
+            model,
+            gateway_positions=gateway_positions,
+        )
+    )
+    audit_counts = [
+        sum(int(value == 1) for value in citizen.theta_or_delta_history[1:])
+        for citizen in model.citizens
+    ]
+    metrics["audit_count_mean"] = (
+        float(np.mean(audit_counts)) if audit_counts else math.nan
+    )
+    metrics["audit_count_median"] = (
+        float(np.median(audit_counts)) if audit_counts else math.nan
+    )
 
     common = {
         "design_id": design_id,
@@ -355,6 +382,9 @@ def run_condition(
         "network_environment": environment,
         "reliance_mode": reliance_mode,
         "jammer_active": bool(jammer_active),
+        "jammer_regime": str(model.jammer_regime),
+        "peer_evidence_mode": str(model.peer_evidence_mode),
+        "frozen_ranking_mode": str(model.frozen_ranking_mode),
         "K": int(k),
         "initial_state_fingerprint": initial_fp,
         "structural_fingerprint": structure_fp,
@@ -391,6 +421,12 @@ def run_condition(
             {
                 **common,
                 **reliance_checkpoint_metrics(model, period),
+                **posterior_precision_checkpoint(model, period),
+                **dominant_reliance_skeleton_metrics(
+                    model,
+                    period=period,
+                    gateway_positions=gateway_positions,
+                ),
             }
         )
         belief_checkpoint_rows.append(
