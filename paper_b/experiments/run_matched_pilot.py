@@ -35,7 +35,10 @@ from pathlib import Path
 
 import numpy as np
 
-from model.InfoSourceSamplingLearning import InfoSampleModel
+from model.InfoSourceSamplingLearning import (
+    InfoSampleModel,
+    recursive_rank_probabilities,
+)
 from paper_b.experiments.run_local_diagnostic import (
     NETWORK_ENVIRONMENTS,
     base_model_config,
@@ -320,6 +323,7 @@ def run_condition(
     peer_evidence_mode: str = "legacy_batch",
     frozen_ranking_mode: str = "first_audit",
     gateway_positions: set[int] | None = None,
+    record_expert_rank_checkpoints: bool = False,
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -348,8 +352,63 @@ def run_condition(
         if p < int(model.max_steps)
     }
     evidence_checkpoint_rows = []
+    expert_rank_checkpoint_rows = []
 
     for _ in range(model.max_steps):
+        if (
+            record_expert_rank_checkpoints
+            and int(model.period) in measurement_periods
+        ):
+            ranks = []
+            probabilities = []
+            for citizen in model.citizens:
+                ranking = list(citizen._behavioral_ranking())
+                expert_index = next(
+                    (
+                        idx
+                        for idx, source in enumerate(ranking)
+                        if source.type_of_agent == "infoprovider"
+                    ),
+                    None,
+                )
+                if expert_index is None:
+                    continue
+                rank = int(expert_index) + 1
+                ranks.append(rank)
+                probabilities.append(
+                    float(
+                        citizen.substantive_reliance_probabilities.get(
+                            ranking[expert_index],
+                            0.0,
+                        )
+                    )
+                    if citizen.substantive_reliance_probabilities
+                    else float(
+                        recursive_rank_probabilities(
+                            len(ranking),
+                            model.epsilon,
+                        )[expert_index]
+                    )
+                )
+
+            row = {
+                "period": int(model.period),
+                "horizon_step": int(model.period) + 1,
+                "mean_expert_rank": (
+                    float(np.mean(ranks)) if ranks else math.nan
+                ),
+                "mean_expert_acquisition_probability": (
+                    float(np.mean(probabilities))
+                    if probabilities else math.nan
+                ),
+            }
+            max_rank = max(ranks) if ranks else 0
+            for rank in range(1, max_rank + 1):
+                row[f"expert_rank_{rank}_share"] = float(
+                    np.mean([value == rank for value in ranks])
+                )
+            expert_rank_checkpoint_rows.append(row)
+
         model.step()
         completed_period = int(model.period) - 1
         if completed_period in measurement_periods:
@@ -503,6 +562,10 @@ def run_condition(
         "lambda_checkpoints": lambda_rows,
         "belief_checkpoints": belief_checkpoint_rows,
         "evidence_checkpoints": evidence_rows,
+        "expert_rank_checkpoints": [
+            {**common, **record}
+            for record in expert_rank_checkpoint_rows
+        ],
         "jammer_strategy": jammer_rows,
         "edges": edge_rows,
     }
