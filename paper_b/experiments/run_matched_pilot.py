@@ -56,6 +56,8 @@ from paper_b.metrics import (
 )
 from paper_b.measurement import (
     acquisition_comparable_metrics,
+    evidence_channel_decomposition_metrics,
+    evidence_channel_decomposition_rows,
     evidence_precision_network_metrics,
     null_last_share,
 )
@@ -324,6 +326,7 @@ def run_condition(
     frozen_ranking_mode: str = "first_audit",
     gateway_positions: set[int] | None = None,
     record_expert_rank_checkpoints: bool = False,
+    record_channel_decomposition: bool = False,
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -353,6 +356,7 @@ def run_condition(
     }
     evidence_checkpoint_rows = []
     expert_rank_checkpoint_rows = []
+    channel_checkpoint_rows = []
 
     for _ in range(model.max_steps):
         if (
@@ -404,6 +408,17 @@ def run_condition(
 
         model.step()
         completed_period = int(model.period) - 1
+        if (
+            record_channel_decomposition
+            and int(model.period) in {25, 50, 100, 200, 400}
+        ):
+            channel_checkpoint_rows.append(
+                {
+                    "period": completed_period,
+                    "horizon_step": int(model.period),
+                    **evidence_channel_decomposition_metrics(model),
+                }
+            )
         if completed_period in measurement_periods:
             evidence_checkpoint_rows.append(
                 {
@@ -458,6 +473,8 @@ def run_condition(
         )
     )
     metrics["null_last_share"] = null_last_share(model)
+    if record_channel_decomposition:
+        metrics.update(evidence_channel_decomposition_metrics(model))
     audit_counts = [
         sum(int(value == 1) for value in citizen.theta_or_delta_history[1:])
         for citizen in model.citizens
@@ -513,6 +530,13 @@ def run_condition(
         for citizen in model.citizens
     ]
 
+    channel_citizen_rows = []
+    if record_channel_decomposition:
+        channel_citizen_rows = [
+            {**common, **row}
+            for row in evidence_channel_decomposition_rows(model)
+        ]
+
     lambda_rows = []
     belief_checkpoint_rows = []
     edge_rows = []
@@ -559,6 +583,11 @@ def run_condition(
             {**common, **record}
             for record in expert_rank_checkpoint_rows
         ],
+        "channel_checkpoints": [
+            {**common, **record}
+            for record in channel_checkpoint_rows
+        ],
+        "channel_citizens": channel_citizen_rows,
         "jammer_strategy": jammer_rows,
         "edges": edge_rows,
     }
