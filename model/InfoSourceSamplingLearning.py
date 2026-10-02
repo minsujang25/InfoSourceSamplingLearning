@@ -1226,6 +1226,12 @@ class Citizen(InfoAgents):
         # ranking, message generation, or posterior arithmetic.
         self.cumulative_evidence_precision: dict[InfoAgents, float] = {}
         self.cumulative_evidence_inclusion_periods: dict[InfoAgents, int] = {}
+        self.cumulative_evidence_channel_inclusion_periods: dict[str, int] = {
+            "expert": 0,
+            "same_peer": 0,
+            "other_peer": 0,
+            "jammer": 0,
+        }
         self.state_learning_period_count: int = 0
         self._pending_evidence_precision: dict[InfoAgents, float] = {}
 
@@ -1261,6 +1267,12 @@ class Citizen(InfoAgents):
         self.sd_delta = {s: sd_values[i] for i, s in enumerate(sources)}
         self.cumulative_evidence_precision = {s: 0.0 for s in sources}
         self.cumulative_evidence_inclusion_periods = {s: 0 for s in sources}
+        self.cumulative_evidence_channel_inclusion_periods = {
+            "expert": 0,
+            "same_peer": 0,
+            "other_peer": 0,
+            "jammer": 0,
+        }
         self.state_learning_period_count = 0
         self._pending_evidence_precision = {}
         self.mu_delta_beliefs = [mu_values.copy()]
@@ -1597,12 +1609,33 @@ class Citizen(InfoAgents):
 
         if self.theta_or_delta == 0:
             self.state_learning_period_count += 1
+            included_channels = set()
             for source, value in self._pending_evidence_precision.items():
-                if float(value) > 0.0:
-                    self.cumulative_evidence_inclusion_periods[source] = int(
-                        self.cumulative_evidence_inclusion_periods.get(source, 0)
-                        + 1
+                if float(value) <= 0.0:
+                    continue
+                self.cumulative_evidence_inclusion_periods[source] = int(
+                    self.cumulative_evidence_inclusion_periods.get(source, 0)
+                    + 1
+                )
+                source_type = getattr(source, "type_of_agent", "unknown")
+                if source_type == "infoprovider":
+                    included_channels.add("expert")
+                elif source_type == "disruptivejammer":
+                    included_channels.add("jammer")
+                elif source_type == "citizen":
+                    included_channels.add(
+                        "same_peer"
+                        if getattr(source, "group_id", None)
+                        == getattr(self, "group_id", None)
+                        else "other_peer"
                     )
+            for channel in included_channels:
+                self.cumulative_evidence_channel_inclusion_periods[channel] = int(
+                    self.cumulative_evidence_channel_inclusion_periods.get(
+                        channel, 0
+                    )
+                    + 1
+                )
 
         if self._pending_mu_delta is not None:
             self.mu_delta = dict(self._pending_mu_delta)
