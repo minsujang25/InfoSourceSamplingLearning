@@ -376,12 +376,24 @@ def _a_lambda_w_seed_rows(
             "Lambda_gateway_total_share": float(
                 row.get("gateway_incoming_reliance_share", math.nan)
             ),
+            "Lambda_gateway_peer_conditional_share": float(
+                row.get("Lambda_gateway_peer_conditional_share", math.nan)
+            ),
+            "Lambda_peer_incoming_hhi": float(
+                row.get("Lambda_peer_incoming_hhi", math.nan)
+            ),
             "W_effective_homophily": float(
                 row.get("W_effective_homophily", math.nan)
             ),
             "W_incoming_hhi": float(row.get("W_incoming_hhi", math.nan)),
             "W_gateway_total_share": float(
                 row.get("W_gateway_incoming_share", math.nan)
+            ),
+            "W_gateway_peer_conditional_share": float(
+                row.get("W_gateway_peer_conditional_share", math.nan)
+            ),
+            "W_peer_incoming_hhi": float(
+                row.get("W_peer_incoming_hhi", math.nan)
             ),
             "W_dominant_same_group_cycle_share": float(
                 row.get("W_dominant_same_group_cycle_share", math.nan)
@@ -417,6 +429,28 @@ def _a_lambda_w_seed_rows(
             )
             result["W_minus_A_gateway_total_share"] = (
                 result["W_gateway_total_share"] - gateway_a
+            )
+
+        gateway_peer_a = float(
+            a.get("A_uniform_gateway_peer_conditional_share", math.nan)
+        )
+        if math.isfinite(gateway_peer_a):
+            result["Lambda_minus_A_gateway_peer_conditional_share"] = (
+                result["Lambda_gateway_peer_conditional_share"]
+                - gateway_peer_a
+            )
+            result["W_minus_A_gateway_peer_conditional_share"] = (
+                result["W_gateway_peer_conditional_share"]
+                - gateway_peer_a
+            )
+
+        peer_hhi_a = float(a.get("A_uniform_peer_incoming_hhi", math.nan))
+        if math.isfinite(peer_hhi_a):
+            result["Lambda_minus_A_peer_incoming_hhi"] = (
+                result["Lambda_peer_incoming_hhi"] - peer_hhi_a
+            )
+            result["W_minus_A_peer_incoming_hhi"] = (
+                result["W_peer_incoming_hhi"] - peer_hhi_a
             )
 
         out.append(result)
