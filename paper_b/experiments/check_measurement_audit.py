@@ -7,6 +7,7 @@ import math
 from model.InfoSourceSamplingLearning import InfoSampleModel
 from paper_b.experiments.run_canonical_production import _base_config
 from paper_b.measurement import (
+    acquisition_comparable_metrics,
     evidence_precision_network_metrics,
     null_last_share,
     structural_uniform_metrics,
@@ -167,11 +168,20 @@ def check_w_metrics_are_finite_after_learning() -> None:
     model = InfoSampleModel(model_attribute=cfg, rng=seed)
     for _ in range(8):
         model.step()
+    lambda_metrics = acquisition_comparable_metrics(model)
+    for key in (
+        "Lambda_peer_incoming_hhi",
+        "Lambda_peer_incoming_top5_share",
+    ):
+        assert math.isfinite(float(lambda_metrics[key]))
+
     metrics = evidence_precision_network_metrics(model)
     for key in (
         "W_expert_precision_share",
         "W_peer_precision_share",
         "W_incoming_hhi",
+        "W_peer_incoming_hhi",
+        "W_peer_incoming_top5_share",
     ):
         assert math.isfinite(float(metrics[key]))
 
