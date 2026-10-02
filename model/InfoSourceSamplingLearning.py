@@ -1225,6 +1225,8 @@ class Citizen(InfoAgents):
         # evidence-precision network W. These values never enter sampling,
         # ranking, message generation, or posterior arithmetic.
         self.cumulative_evidence_precision: dict[InfoAgents, float] = {}
+        self.cumulative_evidence_inclusion_periods: dict[InfoAgents, int] = {}
+        self.state_learning_period_count: int = 0
         self._pending_evidence_precision: dict[InfoAgents, float] = {}
 
         # substantive_reliance_probabilities is the theory object Lambda_t:
@@ -1258,6 +1260,8 @@ class Citizen(InfoAgents):
         self.mu_delta = {s: mu_values[i] for i, s in enumerate(sources)}
         self.sd_delta = {s: sd_values[i] for i, s in enumerate(sources)}
         self.cumulative_evidence_precision = {s: 0.0 for s in sources}
+        self.cumulative_evidence_inclusion_periods = {s: 0 for s in sources}
+        self.state_learning_period_count = 0
         self._pending_evidence_precision = {}
         self.mu_delta_beliefs = [mu_values.copy()]
         self.sd_delta_beliefs = [sd_values.copy()]
@@ -1590,6 +1594,15 @@ class Citizen(InfoAgents):
                 self.cumulative_evidence_precision.get(source, 0.0)
                 + float(value)
             )
+
+        if self.theta_or_delta == 0:
+            self.state_learning_period_count += 1
+            for source, value in self._pending_evidence_precision.items():
+                if float(value) > 0.0:
+                    self.cumulative_evidence_inclusion_periods[source] = int(
+                        self.cumulative_evidence_inclusion_periods.get(source, 0)
+                        + 1
+                    )
 
         if self._pending_mu_delta is not None:
             self.mu_delta = dict(self._pending_mu_delta)
