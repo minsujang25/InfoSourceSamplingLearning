@@ -377,13 +377,6 @@ def run_condition(
                 ranks.append(rank)
                 probabilities.append(
                     float(
-                        citizen.substantive_reliance_probabilities.get(
-                            ranking[expert_index],
-                            0.0,
-                        )
-                    )
-                    if citizen.substantive_reliance_probabilities
-                    else float(
                         recursive_rank_probabilities(
                             len(ranking),
                             model.epsilon,
