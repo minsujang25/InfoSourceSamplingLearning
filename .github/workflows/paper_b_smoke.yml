@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - paper-b-theory-reconstruction
+      - paper-b-validity-redesign
     paths:
       - "model/**"
       - "paper_b/**"
@@ -18,6 +19,7 @@ on:
       - "scripts/run_paper_b_exp3b_extension50.sh"
       - "scripts/run_paper_b_exp3b_cumulative100.sh"
       - "scripts/run_paper_b_exp4_production.sh"
+      - "scripts/run_paper_b_validity_redesign.sh"
       - "scripts/run_paper_b_jammer_posterior_validation.sh"
       - "scripts/run_paper_b_posterior_gain_floor_sensitivity.sh"
       - "environment.yml"
@@ -76,6 +78,41 @@ jobs:
 
       - name: Run theory reconstruction checks
         run: python -m paper_b.experiments.check_reconstruction
+
+      - name: Run validity-redesign deterministic checks
+        run: python -m paper_b.experiments.check_validity_redesign
+
+      - name: Smoke-test validity-redesign diagnostic runner
+        run: |
+          python -m paper_b.experiments.run_validity_redesign \
+            --seeds 1 \
+            --seed-start 5001 \
+            --n-citizens 20 \
+            --horizon 8 \
+            --workers 1 \
+            --truth-clone-seeds 1 \
+            --output-dir /tmp/paper_b_validity_smoke
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(
+              Path("/tmp/paper_b_validity_smoke").glob(
+                  "validity_*/validity_gate.json"
+              )
+          )
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["pass"] is True
+          assert gate["observed_runs"] == 48
+          bundles = list(
+              Path("/tmp/paper_b_validity_smoke").glob(
+                  "validity_*/paper_b_validity_*_shareable.zip"
+              )
+          )
+          assert len(bundles) == 1, bundles
+          PY
 
       - name: Smoke-test local diagnostic runner
         run: |
