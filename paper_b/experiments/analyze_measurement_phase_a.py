@@ -398,7 +398,9 @@ def main() -> None:
             "canonical_horizon_trajectory.csv",
             "phase_a_notes.json",
         ):
-            zf.write(out_root / name, arcname=name)
+            path = out_root / name
+            if path.exists():
+                zf.write(path, arcname=name)
 
     print(f"Phase-A bundle: {bundle}")
 
