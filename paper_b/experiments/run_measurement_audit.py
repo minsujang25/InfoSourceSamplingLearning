@@ -338,7 +338,11 @@ def _identity_gate(
     }
 
 
-def _a_lambda_w_seed_rows(runs: list[dict]) -> list[dict]:
+def _a_lambda_w_seed_rows(
+    runs: list[dict],
+    *,
+    n_citizens: int,
+) -> list[dict]:
     cache = {}
     out = []
     for row in runs:
@@ -350,7 +354,11 @@ def _a_lambda_w_seed_rows(runs: list[dict]) -> list[dict]:
             row.get("redundancy_level", ""),
         )
         if key not in cache:
-            cache[key] = _structural_baseline(seed, row)
+            cache[key] = _structural_baseline(
+                seed,
+                row,
+                n_citizens=int(n_citizens),
+            )
         a = cache[key]
 
         result = {
@@ -605,7 +613,10 @@ def main() -> None:
         if math.isfinite(float(r["null_last_share"]))
     ) if null_rows else math.nan
 
-    a_lambda_w = _a_lambda_w_seed_rows(runs)
+    a_lambda_w = _a_lambda_w_seed_rows(
+        runs,
+        n_citizens=int(args.n_citizens),
+    )
     a_lambda_w_summary = _cell_summary(a_lambda_w)
 
     gate = {
