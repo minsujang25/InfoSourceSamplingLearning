@@ -51,6 +51,10 @@ from paper_b.metrics import (
     reliance_hhi,
     theory_metrics,
 )
+from paper_b.measurement import (
+    evidence_precision_network_metrics,
+    null_last_share,
+)
 from paper_b.validation import assert_finite_state
 
 
@@ -337,8 +341,28 @@ def run_condition(
     initial_fp = initial_state_fingerprint(config)
     topology = topology_summary(model)
 
+    measurement_periods = {
+        p
+        for p in (0, 1, 2, 5, 10, 25, 50, 100, 150, 199, 299, 399)
+        if p < int(model.max_steps)
+    }
+    evidence_checkpoint_rows = []
+
     for _ in range(model.max_steps):
         model.step()
+        completed_period = int(model.period) - 1
+        if completed_period in measurement_periods:
+            evidence_checkpoint_rows.append(
+                {
+                    "period": completed_period,
+                    "horizon_step": completed_period + 1,
+                    "null_last_share": null_last_share(model),
+                    **evidence_precision_network_metrics(
+                        model,
+                        gateway_positions=gateway_positions,
+                    ),
+                }
+            )
         assert_finite_state(
             model,
             context=(
@@ -363,6 +387,13 @@ def run_condition(
             gateway_positions=gateway_positions,
         )
     )
+    metrics.update(
+        evidence_precision_network_metrics(
+            model,
+            gateway_positions=gateway_positions,
+        )
+    )
+    metrics["null_last_share"] = null_last_share(model)
     audit_counts = [
         sum(int(value == 1) for value in citizen.theta_or_delta_history[1:])
         for citizen in model.citizens
@@ -444,6 +475,11 @@ def run_condition(
             for record in model.reliance_history[period]:
                 edge_rows.append({**common, **record})
 
+    evidence_rows = [
+        {**common, **record}
+        for record in evidence_checkpoint_rows
+    ]
+
     jammer_rows = [
         {**common, **record}
         for record in model.jammer_strategy_history
@@ -454,6 +490,7 @@ def run_condition(
         "beliefs": belief_rows,
         "lambda_checkpoints": lambda_rows,
         "belief_checkpoints": belief_checkpoint_rows,
+        "evidence_checkpoints": evidence_rows,
         "jammer_strategy": jammer_rows,
         "edges": edge_rows,
     }
