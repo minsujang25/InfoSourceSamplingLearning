@@ -203,6 +203,12 @@ def main() -> None:
         if not required.exists():
             raise FileNotFoundError(required)
 
+    manifest_path = root / "production_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    n_citizens = int(manifest["n_citizens"])
+
     runs = _read_csv(runs_path)
     group_metrics = _group_terminal_metrics(beliefs_path)
 
@@ -217,13 +223,21 @@ def main() -> None:
             row.get("redundancy_level", ""),
         )
         if structure_key not in structural_cache:
-            structural_cache[structure_key] = _structural_baseline(seed, row)
+            structural_cache[structure_key] = _structural_baseline(
+                seed,
+                row,
+                n_citizens=n_citizens,
+            )
         baseline = structural_cache[structure_key]
 
         out = dict(row)
         out.update(baseline)
 
-        initial_mse = _initial_mse(seed, row)
+        initial_mse = _initial_mse(
+            seed,
+            row,
+            n_citizens=n_citizens,
+        )
         out["initial_mse"] = initial_mse
         terminal_mse = _f(row["mse_truth"])
         out["terminal_mse_fraction_of_initial"] = (
