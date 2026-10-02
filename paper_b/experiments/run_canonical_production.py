@@ -281,6 +281,7 @@ def _decorate(result: dict, **labels) -> None:
         "beliefs",
         "lambda_checkpoints",
         "belief_checkpoints",
+        "evidence_checkpoints",
         "jammer_strategy",
     ):
         for row in result[key]:
