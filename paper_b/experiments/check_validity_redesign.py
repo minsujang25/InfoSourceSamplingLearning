@@ -15,7 +15,13 @@ from paper_b.structural_designs import (
 )
 
 
-def _exp4_config(*, seed: int, reliance_mode: str, jammer_regime: str) -> dict:
+def _exp4_config(
+    *,
+    seed: int,
+    reliance_mode: str,
+    jammer_regime: str,
+    tau_social: float = 0.0,
+) -> dict:
     n_citizens = 20
     groups = balanced_fixed_group_ids(seed=seed, n_citizens=n_citizens)
     structure = exp4_homophily_source_maps(
@@ -53,6 +59,7 @@ def _exp4_config(*, seed: int, reliance_mode: str, jammer_regime: str) -> dict:
             "reliance_mode": reliance_mode,
             "jammer_regime": jammer_regime,
             "peer_evidence_mode": "source_posterior",
+            "tau_social": float(tau_social),
             "frozen_ranking_mode": "pre_disruption",
         }
     )
@@ -116,6 +123,65 @@ def check_null_is_inert_and_last() -> None:
     assert draws == []
 
 
+def check_tau_zero_reproduces_source_posterior() -> None:
+    seed = 9104
+    base = InfoSampleModel(
+        model_attribute=_exp4_config(
+            seed=seed,
+            reliance_mode="adaptive",
+            jammer_regime="null",
+            tau_social=0.0,
+        ),
+        rng=seed,
+    )
+    citizen = base.citizens[0]
+    peer = next(
+        source for source in citizen.info_source
+        if source.type_of_agent == "citizen"
+    )
+    peer._message_sd = 0.4
+    citizen._sample_order = [peer]
+    citizen.sampled_msgs = [[1.2, 1.2, 1.2]]
+    mu, sd = citizen.bayesian_update_theta_from_sources()
+
+    prior_mu = float(citizen.mu_theta_beliefs[-1])
+    prior_var = float(citizen.sd_theta_beliefs[-1]) ** 2
+    obs_var = float(peer._message_sd) ** 2
+    expected_var = 1.0 / (1.0 / prior_var + 1.0 / obs_var)
+    expected_mu = expected_var * (
+        prior_mu / prior_var + 1.2 / obs_var
+    )
+    assert math.isclose(mu, expected_mu, rel_tol=0.0, abs_tol=1e-12)
+    assert math.isclose(sd, math.sqrt(expected_var), rel_tol=0.0, abs_tol=1e-12)
+
+
+def check_tau_social_limits_peer_precision() -> None:
+    seed = 9105
+    model = InfoSampleModel(
+        model_attribute=_exp4_config(
+            seed=seed,
+            reliance_mode="adaptive",
+            jammer_regime="null",
+            tau_social=1.0,
+        ),
+        rng=seed,
+    )
+    citizen = model.citizens[0]
+    peer = next(
+        source for source in citizen.info_source
+        if source.type_of_agent == "citizen"
+    )
+    peer._message_sd = 1e-12
+    citizen._sample_order = [peer]
+    citizen.sampled_msgs = [[1.25]]
+    _, post_sd = citizen.bayesian_update_theta_from_sources()
+
+    prior_var = float(citizen.sd_theta_beliefs[-1]) ** 2
+    lower_bound_sd = math.sqrt(1.0 / (1.0 / prior_var + 1.0))
+    assert math.isclose(post_sd, lower_bound_sd, rel_tol=0.0, abs_tol=1e-10)
+    assert post_sd > 0.9
+
+
 def check_peer_repetition_not_extra_precision() -> None:
     seed = 9103
     model = InfoSampleModel(
@@ -123,6 +189,7 @@ def check_peer_repetition_not_extra_precision() -> None:
             seed=seed,
             reliance_mode="adaptive",
             jammer_regime="null",
+            tau_social=1.0,
         ),
         rng=seed,
     )
@@ -171,6 +238,8 @@ def main() -> None:
     check_legacy_j0_mapping()
     check_common_pre_disruption_ranking()
     check_null_is_inert_and_last()
+    check_tau_zero_reproduces_source_posterior()
+    check_tau_social_limits_peer_precision()
     check_peer_repetition_not_extra_precision()
     check_sender_regimes_execute()
     print("Paper B validity-redesign smoke checks: PASS")
