@@ -264,6 +264,118 @@ def evidence_precision_weights(model) -> dict[int, dict[int, float]]:
     return out
 
 
+def evidence_channel_decomposition_rows(model) -> list[dict]:
+    """Return citizen-level cumulative precision and accessibility by source class.
+
+    The decomposition is passive. Precision uses the same source-specific
+    quantities already accumulated for W. Accessibility is the fraction of
+    state-learning periods in which at least one positive-precision observation
+    from the source class entered the citizen's update.
+    """
+    rows = []
+    for citizen in model.citizens:
+        precision = {
+            "expert": 0.0,
+            "same_peer": 0.0,
+            "other_peer": 0.0,
+            "jammer": 0.0,
+        }
+        inclusions = {
+            "expert": 0,
+            "same_peer": 0,
+            "other_peer": 0,
+            "jammer": 0,
+        }
+
+        for source in citizen.info_source:
+            source_type = getattr(source, "type_of_agent", "unknown")
+            if source_type == "infoprovider":
+                channel = "expert"
+            elif source_type == "disruptivejammer":
+                channel = "jammer"
+            elif source_type == "citizen":
+                channel = (
+                    "same_peer"
+                    if getattr(source, "group_id", None)
+                    == getattr(citizen, "group_id", None)
+                    else "other_peer"
+                )
+            else:
+                continue
+
+            precision[channel] += float(
+                citizen.cumulative_evidence_precision.get(source, 0.0)
+            )
+            inclusions[channel] += int(
+                citizen.cumulative_evidence_inclusion_periods.get(source, 0)
+            )
+
+        total_precision = float(sum(precision.values()))
+        state_periods = int(citizen.state_learning_period_count)
+
+        row = {
+            "citizen_pos": int(citizen.pos),
+            "citizen_group": int(citizen.group_id),
+            "state_learning_periods": state_periods,
+            "Q_expert": precision["expert"],
+            "Q_same_peer": precision["same_peer"],
+            "Q_other_peer": precision["other_peer"],
+            "Q_jammer": precision["jammer"],
+        }
+
+        for channel, q_value in precision.items():
+            row[f"W_{channel}"] = (
+                float(q_value / total_precision)
+                if total_precision > 0.0
+                else 0.0
+            )
+            row[f"I_{channel}"] = (
+                float(inclusions[channel] / state_periods)
+                if state_periods > 0
+                else 0.0
+            )
+
+        row["Q_corrective_crosscut"] = float(
+            precision["expert"] + precision["other_peer"]
+        )
+        row["W_corrective_crosscut"] = float(
+            row["W_expert"] + row["W_other_peer"]
+        )
+        row["I_corrective_crosscut_any"] = math.nan
+        rows.append(row)
+
+    return rows
+
+
+def evidence_channel_decomposition_metrics(model) -> dict:
+    """Aggregate citizen-level channel decomposition for one run/checkpoint."""
+    rows = evidence_channel_decomposition_rows(model)
+    if not rows:
+        return {}
+
+    def mean(name: str) -> float:
+        values = [float(row[name]) for row in rows]
+        return float(np.mean(values)) if values else math.nan
+
+    return {
+        "W_expert_channel": mean("W_expert"),
+        "W_same_peer_channel": mean("W_same_peer"),
+        "W_other_peer_channel": mean("W_other_peer"),
+        "W_jammer_channel": mean("W_jammer"),
+        "W_corrective_crosscut_channel": mean("W_corrective_crosscut"),
+        "I_expert_channel": mean("I_expert"),
+        "I_same_peer_channel": mean("I_same_peer"),
+        "I_other_peer_channel": mean("I_other_peer"),
+        "I_jammer_channel": mean("I_jammer"),
+        "Q_expert_channel": mean("Q_expert"),
+        "Q_same_peer_channel": mean("Q_same_peer"),
+        "Q_other_peer_channel": mean("Q_other_peer"),
+        "Q_jammer_channel": mean("Q_jammer"),
+        "Q_corrective_crosscut_channel": mean("Q_corrective_crosscut"),
+        "state_learning_periods_mean": mean("state_learning_periods"),
+    }
+
+
 def _top_source(weight_map: dict[int, float]) -> int | None:
     positive = {
         int(source): float(weight)
