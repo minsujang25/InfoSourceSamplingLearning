@@ -156,6 +156,39 @@ def _initial_mse(seed: int, row: dict, n_citizens: int = 100) -> float:
     return float(np.mean(values**2))
 
 
+def _initial_group_gap(seed: int, row: dict, n_citizens: int = 100) -> float:
+    if row["experiment"] == "III":
+        values = initial_beliefs(
+            regime="flat",
+            seed=seed,
+            n_citizens=n_citizens,
+        )[2:]
+        by_group = {-1: [], 1: []}
+        for value in values:
+            group = -1 if float(value) <= 0.0 else 1
+            by_group[group].append(float(value))
+    else:
+        groups = balanced_fixed_group_ids(
+            seed=seed,
+            n_citizens=n_citizens,
+        )
+        values = exp4_initial_beliefs(
+            seed=seed,
+            n_citizens=n_citizens,
+            group_ids=groups,
+            segregation=row["segregation_level"],
+            high_group_shift=3.0,
+            residual_sd=1.0,
+        )
+        by_group = {-1: [], 1: []}
+        for pos in range(2, 2 + n_citizens):
+            by_group[int(groups[pos])].append(float(values[pos]))
+
+    if not by_group[-1] or not by_group[1]:
+        return math.nan
+    return abs(_mean(by_group[1]) - _mean(by_group[-1]))
+
+
 def _mean(values: list[float]) -> float:
     values = [float(v) for v in values if math.isfinite(float(v))]
     return float(statistics.fmean(values)) if values else math.nan
@@ -239,6 +272,11 @@ def main() -> None:
             n_citizens=n_citizens,
         )
         out["initial_mse"] = initial_mse
+        out["initial_group_mean_gap"] = _initial_group_gap(
+            seed,
+            row,
+            n_citizens=n_citizens,
+        )
         terminal_mse = _f(row["mse_truth"])
         out["terminal_mse_fraction_of_initial"] = (
             terminal_mse / initial_mse if initial_mse > 0.0 else math.nan
@@ -277,6 +315,13 @@ def main() -> None:
         )
 
         out.update(group_metrics.get(_run_key(row), {}))
+        terminal_gap = _f(out.get("terminal_group_mean_gap"))
+        initial_gap = _f(out.get("initial_group_mean_gap"))
+        out["terminal_minus_initial_group_gap"] = (
+            terminal_gap - initial_gap
+            if math.isfinite(terminal_gap) and math.isfinite(initial_gap)
+            else math.nan
+        )
         augmented.append(out)
 
     # Cell summaries.
@@ -299,6 +344,8 @@ def main() -> None:
         "mae_truth",
         "initial_mse",
         "terminal_mse_fraction_of_initial",
+        "initial_group_mean_gap",
+        "terminal_minus_initial_group_gap",
         "A_uniform_structural_homophily",
         "effective_homophily",
         "Lambda_minus_A_homophily",
@@ -340,6 +387,57 @@ def main() -> None:
         if row["sender_regime"] in {"null", "fixed_biased"}
     ]
 
+    total_loss_index = {
+        (
+            row["experiment"],
+            row["homophily_level"],
+            row["segregation_level"],
+            row["redundancy_level"],
+            row["reliance_mode"],
+            row["sender_regime"],
+        ): row
+        for row in total_loss
+    }
+    total_loss_contrasts = []
+    structural_cells = {
+        (
+            row["experiment"],
+            row["homophily_level"],
+            row["segregation_level"],
+            row["redundancy_level"],
+        )
+        for row in total_loss
+    }
+    for experiment, h, s, r in sorted(structural_cells):
+        def get(mode, sender):
+            return total_loss_index.get(
+                (experiment, h, s, r, mode, sender)
+            )
+
+        for sender in ("null", "fixed_biased"):
+            adaptive = get("adaptive", sender)
+            frozen = get("frozen", sender)
+            if adaptive is None or frozen is None:
+                continue
+            adaptive_mse = _f(adaptive.get("mse_truth_mean"))
+            frozen_mse = _f(frozen.get("mse_truth_mean"))
+            total_loss_contrasts.append(
+                {
+                    "experiment": experiment,
+                    "homophily_level": h,
+                    "segregation_level": s,
+                    "redundancy_level": r,
+                    "sender_regime": sender,
+                    "adaptive_mse": adaptive_mse,
+                    "frozen_mse": frozen_mse,
+                    "adaptive_minus_frozen_mse": (
+                        adaptive_mse - frozen_mse
+                    ),
+                    "adaptive_rmse": _f(adaptive.get("rmse_truth_mean")),
+                    "frozen_rmse": _f(frozen.get("rmse_truth_mean")),
+                }
+            )
+
     # Existing canonical trajectory checkpoints. Period 100 is T=101 in the
     # frozen production; exact T=100 is added in the passive measurement rerun.
     checkpoints = _read_csv(checkpoint_path)
@@ -367,6 +465,7 @@ def main() -> None:
     _write_csv(out_root / "A_lambda_seed_metrics.csv", augmented)
     _write_csv(out_root / "A_lambda_cell_summary.csv", cell_summary)
     _write_csv(out_root / "total_loss_2x2.csv", total_loss)
+    _write_csv(out_root / "total_loss_contrasts.csv", total_loss_contrasts)
     _write_csv(out_root / "canonical_horizon_trajectory.csv", trajectory)
 
     notes = {
@@ -395,12 +494,19 @@ def main() -> None:
             "A_lambda_seed_metrics.csv",
             "A_lambda_cell_summary.csv",
             "total_loss_2x2.csv",
+            "total_loss_contrasts.csv",
             "canonical_horizon_trajectory.csv",
             "phase_a_notes.json",
         ):
             path = out_root / name
             if path.exists():
                 zf.write(path, arcname=name)
+        group_damage = root / "group_sender_damage.csv"
+        if group_damage.exists():
+            zf.write(
+                group_damage,
+                arcname="canonical_group_sender_damage.csv",
+            )
 
     print(f"Phase-A bundle: {bundle}")
 
