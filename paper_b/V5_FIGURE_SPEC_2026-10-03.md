@@ -11,8 +11,9 @@ panels. No simulation or recomputation of model outcomes is allowed.
 **Panel A: terminal learning loss.** Plot the eight canonical Experiment-1 null
 cells on a log MSE axis. Order structural cells as low-H/low-S,
 high-H/low-S, low-H/high-S, high-H/high-S. Distinguish adaptive and frozen
-reliance by marker/line. Include MCSE error bars. The visual target is the
-high-H/high-S departure, especially under frozen reliance.
+reliance with slightly offset markers and MCSE error bars, but do **not** connect
+the four categorical cells with lines. The visual target is the high-H/high-S
+departure, especially under frozen reliance.
 
 **Panel B: high-H/high-S trajectory.** Plot MSE at T=100,200,300,400 for
 adaptive and frozen reliance. Use a log MSE axis. The target interpretation is
@@ -61,12 +62,16 @@ at manuscript-layout stage.
 **Accessibility panel:** compare low versus high multiplicity in top-gateway
 share, gateway acquisition mass, and gateway inclusion probability.
 
-**Best-rank panel:** compare mean best gateway rank under low/high multiplicity.
+**Best-rank diagnostic:** compare mean best gateway rank under low/high
+multiplicity, but retain this as a Supplement diagnostic rather than a required
+main-text panel because it is largely redundant with the top-ranked-gateway
+share in the accessibility panel.
 
 **Null-loss panel:** terminal MSE under low/high multiplicity by reliance mode.
 
-**Stress panel:** fixed-biased damage (fixed-biased MSE minus null MSE) under
-low/high multiplicity by reliance mode.
+**Stress panel:** fixed-biased excess MSE (fixed-biased MSE minus null MSE)
+under low/high multiplicity by reliance mode, with MCSE computed from the paired
+seed-level fixed-minus-null contrast.
 
 Core interpretation: Experiment 2 protects corrective sources from local rank
 competition; it is not merely a generic "redundancy" result.
