@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import zipfile
 from pathlib import Path
 
 import matplotlib
@@ -379,8 +380,17 @@ def main() -> None:
     )
     if missing:
         raise RuntimeError(f"Missing draft figure panels: {missing}")
+
+    bundle = out / "paper_b_v5_draft_figures_review.zip"
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(out.iterdir()):
+            if path == bundle or not path.is_file():
+                continue
+            zf.write(path, arcname=path.name)
+
     print("Paper B v5 draft figure gate: PASS")
     print(f"Panels written to: {out}")
+    print(f"Review bundle: {bundle}")
 
 
 if __name__ == "__main__":
