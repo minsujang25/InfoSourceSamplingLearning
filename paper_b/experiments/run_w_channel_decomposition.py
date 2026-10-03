@@ -216,6 +216,7 @@ def _run_seed_epsilon(task: dict) -> dict:
             block_id=f"channel_e{epsilon:.2f}__s{seed}",
             save_edge_log=False,
             record_channel_decomposition=True,
+            channel_decomposition_steps=(10, 25, 50, 100, 200, 400),
         )
 
         labels = {
@@ -540,7 +541,7 @@ def main() -> None:
     )
 
     design = {
-        "purpose": "Paper B exact W-channel decomposition",
+        "purpose": "Paper B exact W-channel decomposition with early checkpoints",
         "reference_canonical_design": REFERENCE_CANONICAL_ID,
         "reference_mechanism_design": REFERENCE_MECHANISM_ID,
         "seeds": seeds,
@@ -562,6 +563,7 @@ def main() -> None:
         "tau_social": 1.0,
         "peer_evidence_mode": "source_posterior",
         "frozen_ranking_mode": "pre_disruption",
+        "channel_decomposition_steps": [10, 25, 50, 100, 200, 400],
         "canonical_base_match": canonical_match,
         "software_versions": software_versions(),
         "scientific_code_fingerprint": _scientific_fingerprint(),
