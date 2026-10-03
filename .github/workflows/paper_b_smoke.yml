@@ -9,6 +9,7 @@ on:
       - paper-b-canonical-production
       - paper-b-measurement-audit
       - paper-b-mechanism-robustness
+      - paper-b-rank-unification
       - paper-b-w-channel-decomposition
       - paper-b-epsilon-degree-phase
     paths:
@@ -32,6 +33,7 @@ on:
       - "scripts/run_paper_b_measurement_audit.sh"
       - "scripts/run_paper_b_expert_rank_audit.sh"
       - "scripts/run_paper_b_mechanism_robustness.sh"
+      - "scripts/run_paper_b_rank_unification.sh"
       - "scripts/run_paper_b_w_channel_decomposition.sh"
       - "scripts/run_paper_b_epsilon_degree_phase.sh"
       - "scripts/run_paper_b_jammer_posterior_validation.sh"
@@ -56,6 +58,7 @@ on:
       - "scripts/run_paper_b_measurement_audit.sh"
       - "scripts/run_paper_b_expert_rank_audit.sh"
       - "scripts/run_paper_b_mechanism_robustness.sh"
+      - "scripts/run_paper_b_rank_unification.sh"
       - "scripts/run_paper_b_w_channel_decomposition.sh"
       - "scripts/run_paper_b_epsilon_degree_phase.sh"
       - "environment.yml"
@@ -403,6 +406,49 @@ jobs:
         run: |
           PAPER_B_WORKERS=12 PAPER_B_VALIDATE_ONLY=1 \
             bash scripts/run_paper_b_epsilon_degree_phase.sh
+
+      - name: Check rank-unification audit
+        run: python -m paper_b.experiments.check_rank_unification
+
+      - name: Validate rank-unification wrapper environment parsing
+        run: |
+          PAPER_B_WORKERS=12 PAPER_B_VALIDATE_ONLY=1 \
+            bash scripts/run_paper_b_rank_unification.sh
+
+      - name: Smoke-test rank-unification runner
+        run: |
+          python -m paper_b.experiments.run_rank_unification_audit \
+            --seeds 1 \
+            --seed-start 6001 \
+            --n-citizens 20 \
+            --horizon 25 \
+            --workers 1 \
+            --output-dir /tmp/paper_b_rank_unification_smoke \
+            --skip-reference-gate
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          gates = list(
+              Path("/tmp/paper_b_rank_unification_smoke").glob(
+                  "rank_*/rank_gate.json"
+              )
+          )
+          assert len(gates) == 1, gates
+          gate = json.loads(gates[0].read_text())
+          print(json.dumps(gate, indent=2, sort_keys=True))
+          assert gate["observed_runs"] == 8
+          assert gate["expected_runs"] == 8
+          assert gate["reference_gate_skipped"] is True
+          assert gate["all_terminal_mse_finite"] is True
+
+          bundles = list(
+              Path("/tmp/paper_b_rank_unification_smoke").glob(
+                  "rank_*/paper_b_rank_unification_review_*.zip"
+              )
+          )
+          assert len(bundles) == 1, bundles
+          PY
 
       - name: Smoke-test local diagnostic runner
         run: |
