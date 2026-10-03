@@ -327,6 +327,7 @@ def run_condition(
     gateway_positions: set[int] | None = None,
     record_expert_rank_checkpoints: bool = False,
     record_channel_decomposition: bool = False,
+    record_rank_unification_checkpoints: bool = False,
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -357,8 +358,124 @@ def run_condition(
     evidence_checkpoint_rows = []
     expert_rank_checkpoint_rows = []
     channel_checkpoint_rows = []
+    rank_unification_rows = []
+    channel_group_checkpoint_rows = []
 
     for _ in range(model.max_steps):
+        if (
+            record_rank_unification_checkpoints
+            and int(model.period) in measurement_periods
+        ):
+            # Experiment-2 gateway-rank protection among non-gateway citizens.
+            if gateway_positions:
+                gateways = set(int(x) for x in gateway_positions)
+                top_gateway = []
+                best_gateway_ranks = []
+                gateway_masses = []
+                gateway_inclusions = []
+                for citizen in model.citizens:
+                    if int(citizen.pos) in gateways:
+                        continue
+                    ranking = list(citizen._behavioral_ranking())
+                    probs = recursive_rank_probabilities(
+                        len(ranking),
+                        model.epsilon,
+                    )
+                    peer_indices = [
+                        idx
+                        for idx, source in enumerate(ranking)
+                        if source.type_of_agent == "citizen"
+                    ]
+                    gateway_indices = [
+                        idx
+                        for idx, source in enumerate(ranking)
+                        if int(source.pos) in gateways
+                        and source.type_of_agent == "citizen"
+                    ]
+                    if not gateway_indices:
+                        continue
+                    best = min(gateway_indices) + 1
+                    mass = float(sum(probs[idx] for idx in gateway_indices))
+                    best_gateway_ranks.append(best)
+                    gateway_masses.append(mass)
+                    gateway_inclusions.append(
+                        float(1.0 - (1.0 - mass) ** int(model.credit))
+                    )
+                    if peer_indices:
+                        top_gateway.append(
+                            int(peer_indices[0] in gateway_indices)
+                        )
+
+                if best_gateway_ranks:
+                    rank_unification_rows.append(
+                        {
+                            "diagnostic_type": "gateway_rank",
+                            "period": int(model.period),
+                            "horizon_step": int(model.period) + 1,
+                            "citizen_group": "",
+                            "n_citizens": len(best_gateway_ranks),
+                            "top_peer_gateway_share": float(
+                                np.mean(top_gateway)
+                            ) if top_gateway else math.nan,
+                            "mean_best_gateway_rank": float(
+                                np.mean(best_gateway_ranks)
+                            ),
+                            "mean_gateway_acquisition_mass": float(
+                                np.mean(gateway_masses)
+                            ),
+                            "mean_gateway_inclusion_probability": float(
+                                np.mean(gateway_inclusions)
+                            ),
+                        }
+                    )
+
+            # Fixed-biased/source-rank diagnostics by citizen group.
+            jammer_by_group = {}
+            for citizen in model.citizens:
+                ranking = list(citizen._behavioral_ranking())
+                jammer_idx = next(
+                    (
+                        idx
+                        for idx, source in enumerate(ranking)
+                        if source.type_of_agent == "disruptivejammer"
+                    ),
+                    None,
+                )
+                if jammer_idx is None:
+                    continue
+                probs = recursive_rank_probabilities(
+                    len(ranking),
+                    model.epsilon,
+                )
+                group = int(citizen.group_id)
+                jammer_by_group.setdefault(group, []).append(
+                    (
+                        int(jammer_idx) + 1,
+                        float(probs[jammer_idx]),
+                    )
+                )
+
+            for group, values in sorted(jammer_by_group.items()):
+                ranks = [rank for rank, _ in values]
+                probs = [prob for _, prob in values]
+                row = {
+                    "diagnostic_type": "jammer_rank",
+                    "period": int(model.period),
+                    "horizon_step": int(model.period) + 1,
+                    "citizen_group": int(group),
+                    "n_citizens": len(values),
+                    "mean_jammer_rank": float(np.mean(ranks)),
+                    "mean_jammer_acquisition_probability": float(
+                        np.mean(probs)
+                    ),
+                }
+                max_rank = max(ranks)
+                for rank in range(1, max_rank + 1):
+                    row[f"jammer_rank_{rank}_share"] = float(
+                        np.mean([value == rank for value in ranks])
+                    )
+                rank_unification_rows.append(row)
+
         if (
             record_expert_rank_checkpoints
             and int(model.period) in measurement_periods
@@ -419,6 +536,43 @@ def run_condition(
                     **evidence_channel_decomposition_metrics(model),
                 }
             )
+            citizen_channel_rows = evidence_channel_decomposition_rows(model)
+            groups = sorted(
+                set(int(row["citizen_group"]) for row in citizen_channel_rows)
+            )
+            for group in groups:
+                subset = [
+                    row
+                    for row in citizen_channel_rows
+                    if int(row["citizen_group"]) == group
+                ]
+                if not subset:
+                    continue
+                metric_names = (
+                    "W_expert",
+                    "W_same_peer",
+                    "W_other_peer",
+                    "W_jammer",
+                    "I_expert",
+                    "I_same_peer",
+                    "I_other_peer",
+                    "I_jammer",
+                    "Q_expert",
+                    "Q_same_peer",
+                    "Q_other_peer",
+                    "Q_jammer",
+                )
+                group_row = {
+                    "period": completed_period,
+                    "horizon_step": int(model.period),
+                    "citizen_group": int(group),
+                    "n_citizens": len(subset),
+                }
+                for name in metric_names:
+                    group_row[name] = float(
+                        np.mean([float(row[name]) for row in subset])
+                    )
+                channel_group_checkpoint_rows.append(group_row)
         if completed_period in measurement_periods:
             evidence_checkpoint_rows.append(
                 {
@@ -587,7 +741,15 @@ def run_condition(
             {**common, **record}
             for record in channel_checkpoint_rows
         ],
+        "channel_group_checkpoints": [
+            {**common, **record}
+            for record in channel_group_checkpoint_rows
+        ],
         "channel_citizens": channel_citizen_rows,
+        "rank_unification_checkpoints": [
+            {**common, **record}
+            for record in rank_unification_rows
+        ],
         "jammer_strategy": jammer_rows,
         "edges": edge_rows,
     }
