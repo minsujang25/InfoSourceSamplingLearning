@@ -67,7 +67,10 @@ def figure2a(data_dir: Path, out: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(6.6, 4.2))
     x = np.arange(len(order), dtype=float)
-    for mode, marker in (("adaptive", "o"), ("frozen", "s")):
+    for offset, mode, marker in (
+        (-0.07, "adaptive", "o"),
+        (0.07, "frozen", "s"),
+    ):
         ys, es = [], []
         for h, s in order:
             row = df[
@@ -78,11 +81,11 @@ def figure2a(data_dir: Path, out: Path) -> None:
             ys.append(float(row["mse_truth_mean"]))
             es.append(float(row["mse_truth_mcse"]))
         ax.errorbar(
-            x,
+            x + offset,
             ys,
             yerr=es,
             marker=marker,
-            linewidth=1.5,
+            linestyle="none",
             capsize=3,
             label=mode.capitalize(),
         )
@@ -115,7 +118,7 @@ def figure2b(data_dir: Path, out: Path) -> None:
         )
     ax.set_yscale("log")
     ax.set_xlabel("Horizon")
-    ax.set_ylabel("MSE, high H / high S")
+    ax.set_ylabel("MSE (high H, high S)")
     ax.set_xticks([100, 200, 300, 400])
     ax.legend(frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
@@ -178,7 +181,7 @@ def figure4a(data_dir: Path, out: Path) -> None:
     ax.plot(df["peer_degree"], df["mean_expert_rank"], marker="o")
     ax.set_xticks(df["peer_degree"])
     ax.set_xlabel(r"Peer degree $d$")
-    ax.set_ylabel("Mean initial Expert rank")
+    ax.set_ylabel("Mean initial Expert rank (high H, high S)")
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     _save(fig, out, "fig4a_expert_rank_by_degree")
@@ -231,7 +234,7 @@ def figure4c(data_dir: Path, out: Path) -> None:
         )
     ax.set_yscale("log")
     ax.set_xlabel("Initial Expert inclusion probability")
-    ax.set_ylabel("Terminal MSE, high H / high S")
+    ax.set_ylabel("Terminal MSE (high H, high S)")
     ax.legend(frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
@@ -247,18 +250,25 @@ def figure5a(data_dir: Path, out: Path) -> None:
         ("gateway_inclusion_probability", "Gateway inclusion probability"),
     ]
 
-    fig, ax = plt.subplots(figsize=(6.4, 4.0))
-    x = np.arange(len(metrics), dtype=float)
-    width = 0.34
-    for offset, multiplicity in ((-width/2, "low"), (width/2, "high")):
+    fig, ax = plt.subplots(figsize=(6.2, 4.0))
+    y = np.arange(len(metrics), dtype=float)
+    for offset, multiplicity, marker in (
+        (-0.08, "low", "o"),
+        (0.08, "high", "s"),
+    ):
         row = df[df["multiplicity"] == multiplicity].iloc[0]
         values = [float(row[m]) for m, _ in metrics]
-        ax.bar(x + offset, values, width=width, label=multiplicity.capitalize())
-    ax.set_xticks(x)
-    ax.set_xticklabels([label for _, label in metrics], rotation=15, ha="right")
-    ax.set_ylim(0, 1.05)
-    ax.set_ylabel("Probability / acquisition mass")
-    ax.legend(frameon=False)
+        ax.scatter(
+            values,
+            y + offset,
+            marker=marker,
+            label=f"{multiplicity.capitalize()} multiplicity",
+        )
+    ax.set_yticks(y)
+    ax.set_yticklabels([label for _, label in metrics])
+    ax.set_xlim(0, 1.05)
+    ax.set_xlabel("Accessibility measure (0–1)")
+    ax.legend(frameon=False, loc="lower right")
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     _save(fig, out, "fig5a_gateway_accessibility")
@@ -315,16 +325,18 @@ def figure5d(data_dir: Path, out: Path) -> None:
     x = np.array([0.0, 1.0])
     for mode, marker in (("adaptive", "o"), ("frozen", "s")):
         m = df[df["reliance_mode"] == mode].set_index("multiplicity").loc[["low", "high"]]
-        ax.plot(
+        ax.errorbar(
             x,
             m["fixed_biased_damage"].astype(float),
+            yerr=m["fixed_biased_damage_mcse"].astype(float),
             marker=marker,
             linewidth=1.5,
+            capsize=3,
             label=mode.capitalize(),
         )
     ax.set_xticks(x)
     ax.set_xticklabels(["Low multiplicity", "High multiplicity"])
-    ax.set_ylabel("Fixed-biased MSE damage")
+    ax.set_ylabel("Excess MSE (fixed-biased − null)")
     ax.legend(frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
