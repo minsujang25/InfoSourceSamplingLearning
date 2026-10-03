@@ -4,22 +4,29 @@ channels:
   - conda-forge
 
 dependencies:
-  # Pin Python 3.12 because the validated Paper B stack uses Python 3.12.
-  # This avoids NumPy 1.26.4 falling back to an unsupported/source build
-  # under Python 3.13 on Apple Silicon.
+  # Canonical conda environment for the repository.
+  # Python 3.12 is pinned because the validated Paper B stack uses Python 3.12.
   - python=3.12
   - pip
 
-  # Scientific stack installed through pip so the versions exactly match
-  # the GitHub CI / reconstruction environment.
+  # Interactive / workflow utilities retained from the legacy environment spec.
+  - ipython
+  - jupyterlab
+  - tqdm
+  - openpyxl
+
+  # Scientific stack installed through pip so the validated versions are
+  # identical across local runs and CI/reconstruction environments.
   - pip:
       - mesa==3.5.1
       - numpy==1.26.4
       - scipy==1.13.1
       - scikit-learn==1.5.2
       - networkx==3.3
-
-      # Data handling and publication-figure stack used by the v5 manuscript
-      # pipeline (prepare_v5_figure_data.py / make_v5_figures.py).
       - pandas==2.2.3
       - matplotlib==3.9.2
+
+      # Supporting packages used elsewhere in the repository.
+      - dill
+      - seaborn
+      - plotly==5.24.1
