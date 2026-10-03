@@ -18,3 +18,8 @@ dependencies:
       - scipy==1.13.1
       - scikit-learn==1.5.2
       - networkx==3.3
+
+      # Data handling and publication-figure stack used by the v5 manuscript
+      # pipeline (prepare_v5_figure_data.py / make_v5_figures.py).
+      - pandas==2.2.3
+      - matplotlib==3.9.2
