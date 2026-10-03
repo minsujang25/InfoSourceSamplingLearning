@@ -305,27 +305,42 @@ def _figure5(
 
     idx = {
         (
+            int(float(row["seed"])),
             row["redundancy_level"],
             row["reliance_mode"],
             row["sender_regime"],
-        ): row
-        for row in loss
+        ): float(row["mse_truth"])
+        for row in exp2
     }
+    seeds = sorted({int(float(row["seed"])) for row in exp2})
     damage = []
     for multiplicity in ("low", "high"):
         for reliance in ("adaptive", "frozen"):
-            null = idx[(multiplicity, reliance, "null")]
-            fixed = idx[(multiplicity, reliance, "fixed_biased")]
+            diffs = []
+            null_values = []
+            fixed_values = []
+            for seed in seeds:
+                null_key = (seed, multiplicity, reliance, "null")
+                fixed_key = (seed, multiplicity, reliance, "fixed_biased")
+                if null_key not in idx or fixed_key not in idx:
+                    continue
+                null_value = idx[null_key]
+                fixed_value = idx[fixed_key]
+                null_values.append(null_value)
+                fixed_values.append(fixed_value)
+                diffs.append(fixed_value - null_value)
+
+            damage_mean, damage_mcse = _mean_mcse(diffs)
             damage.append(
                 {
                     "multiplicity": multiplicity,
                     "reliance_mode": reliance,
-                    "null_mse": float(null["mse_truth_mean"]),
-                    "fixed_biased_mse": float(fixed["mse_truth_mean"]),
-                    "fixed_biased_damage": (
-                        float(fixed["mse_truth_mean"])
-                        - float(null["mse_truth_mean"])
-                    ),
+                    "n_seeds": len(diffs),
+                    "null_mse": float(np.mean(null_values)),
+                    "fixed_biased_mse": float(np.mean(fixed_values)),
+                    "fixed_biased_damage": damage_mean,
+                    "fixed_biased_damage_mcse": damage_mcse,
+                    "fixed_biased_damage_median": float(np.median(diffs)),
                 }
             )
     return gateway, loss, damage
