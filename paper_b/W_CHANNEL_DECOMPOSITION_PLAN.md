@@ -239,3 +239,14 @@ This is not treated as causal mediation.
 5. run the mechanism-collapse diagnostic;
 6. freeze the mechanism wording;
 7. only then design the \((\epsilon,d)\) phase diagram.
+
+
+## Theory-closure logging extension — October 3, 2026
+
+For the final Theory closure, the identical W-channel design is rerun with one
+additional passive channel-decomposition checkpoint after 10 completed periods.
+The existing checkpoints at 25, 50, 100, 200, and 400 are unchanged. No
+behavioral parameter, treatment condition, source rule, acquisition rule, or
+randomization is modified. The rerun must reproduce the frozen terminal
+outcomes and structural/initial-state fingerprints within the existing 1e-12
+identity tolerance before the T=10 channel metrics are used.
