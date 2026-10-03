@@ -328,6 +328,7 @@ def run_condition(
     record_expert_rank_checkpoints: bool = False,
     record_channel_decomposition: bool = False,
     record_rank_unification_checkpoints: bool = False,
+    channel_decomposition_steps: tuple[int, ...] = (25, 50, 100, 200, 400),
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -527,7 +528,7 @@ def run_condition(
         completed_period = int(model.period) - 1
         if (
             record_channel_decomposition
-            and int(model.period) in {25, 50, 100, 200, 400}
+            and int(model.period) in set(int(x) for x in channel_decomposition_steps)
         ):
             channel_checkpoint_rows.append(
                 {
