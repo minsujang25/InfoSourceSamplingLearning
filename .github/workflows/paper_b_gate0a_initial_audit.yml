@@ -1,0 +1,41 @@
+name: Paper B Gate 0A initial audit regression
+
+on:
+  push:
+    branches:
+      - paper-b-gate0a-initial-audit
+    paths:
+      - "model/InfoSourceSamplingLearning.py"
+      - "paper_b/test_gate0a_initial_audit.py"
+      - "paper_b/experiments/check_pilot_output.py"
+      - ".github/workflows/paper_b_gate0a_initial_audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  initial-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned modeling dependencies
+        run: |
+          python -m pip install \
+            "mesa==3.5.1" \
+            "numpy==1.26.4" \
+            "scipy==1.13.1" \
+            "scikit-learn==1.5.2" \
+            "networkx==3.3"
+      - name: Compile modified Python files
+        run: |
+          python -m py_compile \
+            model/InfoSourceSamplingLearning.py \
+            paper_b/test_gate0a_initial_audit.py \
+            paper_b/experiments/run_matched_pilot.py \
+            paper_b/experiments/check_pilot_output.py
+      - name: Run period-0 centroid audit integration tests
+        run: python -m unittest paper_b.test_gate0a_initial_audit -v
