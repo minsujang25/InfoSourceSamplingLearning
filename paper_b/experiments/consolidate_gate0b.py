@@ -153,6 +153,58 @@ def receiver_differences(damage: list[dict]) -> list[dict]:
     return out
 
 
+def credibility_aware_vs_myopic(damage: list[dict]) -> list[dict]:
+    """Paired credibility-aware minus archived myopic sender damage."""
+    keys = ("seed", "initial_regime", "network_environment", "reliance_mode")
+    idx = {_key(r, *keys) + (r["sender_regime"],): r for r in damage}
+    out = []
+    for base in sorted({_key(r, *keys) for r in damage}):
+        a = idx.get(base + ("credibility_aware",))
+        m = idx.get(base + ("adaptive",))
+        if a is None or m is None:
+            continue
+        out.append({
+            **dict(zip(keys, base)),
+            "aware_minus_myopic_damage": (
+                float(a["delta_mse"]) - float(m["delta_mse"])
+            ),
+            "aware_minus_myopic_total_mse": (
+                float(a["mse_sender"]) - float(m["mse_sender"])
+            ),
+            "aware_damage": float(a["delta_mse"]),
+            "myopic_damage": float(m["delta_mse"]),
+        })
+    return out
+
+
+def credibility_aware_peer_interaction(
+    aware_contrasts: list[dict],
+    *,
+    elite: str = "elite_only",
+    peer: str = "extended",
+) -> list[dict]:
+    """[aware-myopic] under peers minus [aware-myopic] under elite only."""
+    keys = ("seed", "initial_regime", "reliance_mode")
+    idx = {_key(r, *keys) + (r["network_environment"],): r
+           for r in aware_contrasts}
+    out = []
+    for base in sorted({_key(r, *keys) for r in aware_contrasts}):
+        e = idx.get(base + (elite,))
+        p = idx.get(base + (peer,))
+        if e is None or p is None:
+            continue
+        out.append({
+            **dict(zip(keys, base)),
+            "aware_minus_myopic_elite": float(e["aware_minus_myopic_damage"]),
+            "aware_minus_myopic_peers": float(p["aware_minus_myopic_damage"]),
+            "aware_by_peer_interaction": (
+                float(p["aware_minus_myopic_damage"])
+                - float(e["aware_minus_myopic_damage"])
+            ),
+        })
+    return out
+
+
 def consolidate_gate0b(run_root: str | Path) -> dict:
     root = Path(run_root)
     manifest = json.loads((root / "pilot_manifest.json").read_text())
@@ -180,6 +232,12 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
     peer_diffs = peer_damage_differences(damage)
     interactions = adaptation_network_interactions(damage)
     receiver = receiver_differences(damage)
+    aware = (
+        credibility_aware_vs_myopic(damage)
+        if "credibility_aware" in manifest.get("sender_regimes", [])
+        else []
+    )
+    aware_peer = credibility_aware_peer_interaction(aware)
     time_damage = sender_damage(trajectories, by_period=True)
     time_peer = peer_damage_differences(time_damage)
 
@@ -196,6 +254,10 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
     _write_csv(root / "gate0b_receiver_differences.csv", receiver)
     _write_csv(root / "gate0b_checkpoint_sender_damage.csv", time_damage)
     _write_csv(root / "gate0b_checkpoint_peer_damage.csv", time_peer)
+    if aware:
+        _write_csv(root / "gate0c_aware_minus_myopic.csv", aware)
+    if aware_peer:
+        _write_csv(root / "gate0c_aware_by_peer_interaction.csv", aware_peer)
 
     blocks = [{
         "seed": int(p["seed"]),
@@ -233,6 +295,8 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
         "n_peer_differences": len(peer_diffs),
         "n_adaptation_interactions": len(interactions),
         "n_receiver_differences": len(receiver),
+        "n_aware_vs_myopic": len(aware),
+        "n_aware_by_peer_interaction": len(aware_peer),
         "cross_network_initial_state_matched": True,
         "sender_damage_by_condition": [
             {
