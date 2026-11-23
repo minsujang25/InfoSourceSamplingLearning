@@ -94,7 +94,21 @@ def validate_pilot(
             fingerprint_ok = False
             block_errors.append(f"{block_id}: fingerprint mismatch")
 
+        gate0e_modes = {
+            "elite_only": "live",
+            "extended_muted": "muted",
+            "extended_stale": "stale",
+            "extended_live": "live",
+        }
         for row in runs:
+            if str(row.get("network_environment")) in gate0e_modes:
+                expected_peer_mode = gate0e_modes[row["network_environment"]]
+                if str(row.get("peer_signal_mode")) != expected_peer_mode:
+                    config_ok = False
+                    block_errors.append(
+                        f"{block_id}/{row.get('condition')}: "
+                        f"peer_signal_mode expected {expected_peer_mode}"
+                    )
             if sender_grid:
                 expected = {
                     "peer_evidence_mode": manifest["peer_evidence_mode"],
@@ -195,6 +209,24 @@ def validate_pilot(
                     block_errors.append(
                         f"{block_id}: invalid request/delivery for {key}"
                     )
+                network_mode = event.get("network_environment")
+                if "peer_delivered_count" in event:
+                    peer_req = int(event["peer_request_count"])
+                    peer_delivered = int(event["peer_delivered_count"])
+                    if not 0 <= peer_delivered <= peer_req:
+                        sender_event_ok = False
+                        block_errors.append(
+                            f"{block_id}: invalid peer delivery for {key}"
+                        )
+                    if (
+                        network_mode == "extended_muted"
+                        and int(event["period"]) >= 1
+                        and peer_delivered != 0
+                    ):
+                        sender_event_ok = False
+                        block_errors.append(
+                            f"{block_id}: muted peer delivery at {key}"
+                        )
                 if int(event["period"]) == 0:
                     if (
                         event["learning_target"] != "audit"
