@@ -175,6 +175,7 @@ class InfoSampleModel(Model):
         jammer_active: bool = True,
         jammer_regime: str | None = None,
         peer_evidence_mode: str = "legacy_batch",
+        peer_signal_mode: str = "live",
         tau_social: float = 0.0,
         frozen_ranking_mode: str = "first_audit",
         initial_audit_mode: str = "centroid",
@@ -278,6 +279,20 @@ class InfoSampleModel(Model):
             raise ValueError(
                 "peer_evidence_mode must be 'legacy_batch' or "
                 "'source_posterior'."
+            )
+        self.peer_signal_mode = str(
+            take("peer_signal_mode", peer_signal_mode)
+        ).lower()
+        if self.peer_signal_mode not in {"live", "muted", "stale"}:
+            raise ValueError(
+                "peer_signal_mode must be 'live', 'muted', or 'stale'."
+            )
+        if (
+            self.peer_signal_mode != "live"
+            and self.peer_evidence_mode != "source_posterior"
+        ):
+            raise ValueError(
+                "Gate 0E muted/stale channels require source_posterior evidence."
             )
         self.tau_social = float(take("tau_social", tau_social))
         if not math.isfinite(self.tau_social) or self.tau_social < 0.0:
@@ -859,6 +874,10 @@ class InfoAgents(Agent):
 
         self._message_mu = self.mu_theta
         self._message_sd = self.sd_theta
+        # Gate 0E initial sender parameters are immutable across periods.
+        # Do not substitute posterior state at t>=1 in stale channel.
+        self._initial_peer_signal_mu = float(self.mu_theta)
+        self._initial_peer_signal_sd = float(self.sd_theta)
 
     def snapshot_message_state(self) -> None:
         self._message_mu = float(self.mu_theta)
@@ -1375,6 +1394,9 @@ class Citizen(InfoAgents):
         self.num_request: list[int] = []
 
         self.sampled_msgs: list[list[float]] = []
+        # The SD of the actually delivered outgoing peer channel, not
+        # necessarily the peer's concurrently evolving posterior SD.
+        self._delivered_peer_signal_sds: dict[InfoAgents, float] = {}
 
         # Passive measurement-only bookkeeping for the cumulative
         # evidence-precision network W. These values never enter sampling,
@@ -1536,10 +1558,44 @@ class Citizen(InfoAgents):
                 for idx in range(len(ordered_sources))
             ]
 
-        messages = [
-            ordered_sources[i].mu_out(counts[i], self)
-            for i in range(len(ordered_sources))
-        ]
+        if self.model.peer_signal_mode == "live" or self.model.period == 0:
+            # Preserve the original live-mode draw and update ordering.
+            messages = [
+                ordered_sources[i].mu_out(counts[i], self)
+                for i in range(len(ordered_sources))
+            ]
+        else:
+            messages = []
+            for i, source in enumerate(ordered_sources):
+                n_req = int(counts[i])
+                if source.type_of_agent != "citizen":
+                    messages.append(source.mu_out(n_req, self))
+                elif self.model.peer_signal_mode == "muted":
+                    # Preserve random draws and allocated credits, but do
+                    # not deliver a peer observation or redirect allocation.
+                    source.mu_out(n_req, self)
+                    messages.append([])
+                else:  # stale: fixed pre-audit initial mean and SD
+                    messages.append(
+                        list(self.model.rng.normal(
+                            float(source._initial_peer_signal_mu),
+                            float(source._initial_peer_signal_sd),
+                            n_req,
+                        )) if n_req > 0 else []
+                    )
+
+        self._delivered_peer_signal_sds = {
+            source: (
+                float(source._initial_peer_signal_sd)
+                if (
+                    self.model.peer_signal_mode == "stale"
+                    and self.model.period >= 1
+                )
+                else float(source._message_sd)
+            )
+            for source in ordered_sources
+            if source.type_of_agent == "citizen"
+        }
 
         self._sample_order = ordered_sources
         self.num_request = counts
@@ -1593,7 +1649,7 @@ class Citizen(InfoAgents):
             obs_mu = float(values.mean())
             if source.type_of_agent == "citizen":
                 obs_var = max(
-                    float(source._message_sd) ** 2
+                    float(self._delivered_peer_signal_sds[source]) ** 2
                     + float(self.model.tau_social) ** 2,
                     MIN_VAR,
                 )
