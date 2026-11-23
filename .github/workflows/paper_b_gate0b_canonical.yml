@@ -1,0 +1,76 @@
+name: Paper B Gate 0B canonical pilot checks
+
+on:
+  push:
+    branches:
+      - paper-b-gate0b-canonical-pilot
+    paths:
+      - "model/**"
+      - "paper_b/**"
+      - ".github/workflows/paper_b_gate0b_canonical.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate0b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install reproducible Mesa dependencies
+        run: |
+          python -m pip install \
+            "mesa==3.5.1" "numpy==1.26.4" "scipy==1.13.1" \
+            "scikit-learn==1.5.2" "networkx==3.3"
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            paper_b/experiments/run_matched_pilot.py \
+            paper_b/experiments/check_pilot_output.py \
+            paper_b/experiments/consolidate_gate0b.py \
+            paper_b/test_gate0b_canonical_pilot.py
+      - name: Initial audit and sender-grid regression tests
+        run: |
+          python -m unittest paper_b.test_gate0a_initial_audit \
+            paper_b.test_gate0b_canonical_pilot -v
+      - name: Miniature canonical sender x network smoke pilot
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 \
+            --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 12 \
+            --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --sender-regimes null,fixed_biased,adaptive \
+            --peer-evidence-mode source_posterior \
+            --tau-social 1 \
+            --frozen-ranking-mode first_audit \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0b_smoke
+      - name: Verify complete sender matrix and differences
+        run: |
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+          roots = list(Path("/tmp/paperb_gate0b_smoke").glob("pilot_*"))
+          assert len(roots) == 1, roots
+          root = roots[0]
+          manifest = json.loads((root / "pilot_manifest.json").read_text())
+          gate = json.loads((root / "pilot_gate.json").read_text())
+          assert manifest["expected_runs"] == 24, manifest
+          assert gate["pass"], gate
+          rows = list(csv.DictReader((root / "gate0b_sender_damage.csv").open()))
+          assert len(rows) == 16, len(rows)
+          contrasts = list(csv.DictReader(
+              (root / "gate0b_adaptation_network_interaction.csv").open()
+          ))
+          assert len(contrasts) == 4, len(contrasts)
+          assert all(r["baseline_regime"] == "null" for r in rows)
+          print("Gate 0B mini sender-grid smoke: PASS")
+          PY
