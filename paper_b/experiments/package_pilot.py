@@ -32,6 +32,8 @@ BUNDLE_FILES = (
     "gate0b_receiver_differences.csv",
     "gate0b_checkpoint_sender_damage.csv",
     "gate0b_checkpoint_peer_damage.csv",
+    "gate0c_aware_minus_myopic.csv",
+    "gate0c_aware_by_peer_interaction.csv",
 )
 
 
