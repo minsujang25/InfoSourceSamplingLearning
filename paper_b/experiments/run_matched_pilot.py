@@ -71,7 +71,9 @@ CONDITION_ORDER = (
     ("frozen", False),
 )
 SENDER_REGIMES = (
-    "null", "fixed_biased", "adaptive", "credibility_aware", "truth_clone"
+    "null", "fixed_biased", "adaptive", "timing_only",
+    "exposure_uniform", "exposure_ranked", "credibility_aware",
+    "truth_clone",
 )
 
 
@@ -96,7 +98,13 @@ def condition_specs(sender_regimes: tuple[str, ...] | None):
             for reliance, jammer_active in CONDITION_ORDER
         ]
     return [
-        (reliance, sender, sender in {"adaptive", "credibility_aware"})
+        (
+            reliance, sender,
+            sender in {
+                "adaptive", "timing_only", "exposure_uniform",
+                "exposure_ranked", "credibility_aware",
+            },
+        )
         for reliance in ("adaptive", "frozen")
         for sender in sender_regimes
     ]
@@ -156,7 +164,8 @@ def parse_args() -> argparse.Namespace:
         "--sender-regimes",
         default="",
         help=(
-            "Comma-separated subset of null,fixed_biased,adaptive,credibility_aware,truth_clone. "
+            "Comma-separated subset of null,fixed_biased,adaptive,timing_only,"
+            "exposure_uniform,exposure_ranked,credibility_aware,truth_clone. "
             "Omit to reproduce the historical adaptive/J1 vs truth_clone/J0 quartet. "
             "For Gate 0B set: null,fixed_biased,adaptive."
         ),
@@ -183,6 +192,14 @@ def parse_args() -> argparse.Namespace:
         "--initial-audit-mode",
         choices=("centroid", "legacy"),
         default="centroid",
+    )
+    parser.add_argument(
+        "--sender-event-period-limit",
+        type=int, default=0,
+        help=(
+            "Optional RNG-neutral citizen-level Jammer trace through this "
+            "many initial periods; 0 disables capture (production default)."
+        ),
     )
     parser.add_argument(
         "--workers",
@@ -282,6 +299,7 @@ def code_fingerprint() -> str:
         repo_root / "paper_b" / "experiments" / "run_local_diagnostic.py",
         repo_root / "paper_b" / "experiments" / "run_matched_pilot.py",
         repo_root / "paper_b" / "adversary_objectives.py",
+        repo_root / "paper_b" / "experiments" / "sender_event_instrument.py",
         repo_root / "paper_b" / "experiments" / "consolidate_gate0b.py",
         repo_root / "paper_b" / "experiments" / "check_pilot_output.py",
         repo_root / "environment.yml",
@@ -397,6 +415,7 @@ def run_condition(
     record_channel_decomposition: bool = False,
     record_rank_unification_checkpoints: bool = False,
     channel_decomposition_steps: tuple[int, ...] = (25, 50, 100, 200, 400),
+    sender_event_period_limit: int = 0,
 ) -> dict:
     config = dict(base_config)
     config.update(
@@ -423,6 +442,12 @@ def run_condition(
         )
 
     model = InfoSampleModel(model_attribute=config, rng=seed)
+    from paper_b.experiments.sender_event_instrument import (
+        attach_sender_event_capture, complete_sender_events,
+    )
+    event_rows = attach_sender_event_capture(
+        model, limit=int(sender_event_period_limit)
+    )
     structure_fp = structural_fingerprint(model)
     initial_fp = initial_state_fingerprint(config)
     topology = topology_summary(model)
@@ -601,6 +626,9 @@ def run_condition(
             expert_rank_checkpoint_rows.append(row)
 
         model.step()
+        complete_sender_events(
+            model, event_rows, limit=int(sender_event_period_limit)
+        )
         completed_period = int(model.period) - 1
         if (
             record_channel_decomposition
@@ -830,6 +858,9 @@ def run_condition(
             for record in rank_unification_rows
         ],
         "jammer_strategy": jammer_rows,
+        "sender_events": [
+            {**common, **row} for row in event_rows
+        ],
         "edges": edge_rows,
     }
 
@@ -913,6 +944,7 @@ def run_block(task: dict) -> dict:
                 design_id=design_id,
                 block_id=block_id,
                 save_edge_log=bool(task["save_edge_log"]),
+                sender_event_period_limit=int(task["sender_event_period_limit"]),
             )
         )
 
@@ -948,6 +980,9 @@ def run_block(task: dict) -> dict:
         ],
         "jammer_strategy": [
             row for result in results for row in result["jammer_strategy"]
+        ],
+        "sender_events": [
+            row for result in results for row in result["sender_events"]
         ],
         "reliance_edges": [
             row for result in results for row in result["edges"]
@@ -1005,6 +1040,7 @@ def build_design(
         "frozen_ranking_mode": str(args.frozen_ranking_mode),
         "initial_audit_mode": str(args.initial_audit_mode),
         "save_edge_log": bool(args.save_edge_log),
+        "sender_event_period_limit": int(args.sender_event_period_limit),
     }
 
 
@@ -1022,6 +1058,8 @@ def main() -> None:
         raise ValueError("--epsilon must lie in [0, 0.5].")
     if args.workers <= 0:
         raise ValueError("--workers must be positive.")
+    if args.sender_event_period_limit < 0:
+        raise ValueError("--sender-event-period-limit cannot be negative.")
     if not math.isfinite(args.tau_social) or args.tau_social < 0:
         raise ValueError("--tau-social must be finite and nonnegative.")
     if (
@@ -1108,6 +1146,7 @@ def main() -> None:
                 "frozen_ranking_mode": args.frozen_ranking_mode,
                 "initial_audit_mode": args.initial_audit_mode,
                 "save_edge_log": args.save_edge_log,
+                "sender_event_period_limit": args.sender_event_period_limit,
             }
         )
 
@@ -1122,6 +1161,7 @@ def main() -> None:
     print(f"  audit penalty    : {args.jammer_credibility_penalty}")
     print(f"  frozen ranking   : {args.frozen_ranking_mode}")
     print(f"  initial audit    : {args.initial_audit_mode}")
+    print(f"  sender event cap : {args.sender_event_period_limit}")
     print(f"  pending blocks   : {len(pending)}")
     print(f"  resumed/skipped  : {skipped}")
     print(f"  workers          : {args.workers}")
