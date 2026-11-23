@@ -26,6 +26,12 @@ BUNDLE_FILES = (
     "reliance_checkpoints.csv.gz",
     "pilot_summary.json",
     "pilot_gate.json",
+    "gate0b_sender_damage.csv",
+    "gate0b_peer_damage.csv",
+    "gate0b_adaptation_network_interaction.csv",
+    "gate0b_receiver_differences.csv",
+    "gate0b_checkpoint_sender_damage.csv",
+    "gate0b_checkpoint_peer_damage.csv",
 )
 
 
