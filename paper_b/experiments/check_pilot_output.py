@@ -70,6 +70,7 @@ def validate_pilot(
     ))
     sender_grid = manifest.get("analysis_mode") == "sender_grid"
     config_ok = True
+    sender_event_ok = True
 
     for payload in payloads:
         block_id = payload.get("block_id")
@@ -162,6 +163,49 @@ def validate_pilot(
                         )
                         break
 
+        event_limit = int(manifest.get("sender_event_period_limit", 0))
+        if event_limit > 0:
+            events = payload.get("sender_events", [])
+            expected_event_count = (
+                len(runs) * int(manifest["n_citizens"])
+                * min(event_limit, int(manifest["horizon_T"]))
+            )
+            if len(events) != expected_event_count:
+                sender_event_ok = False
+                block_errors.append(
+                    f"{block_id}: event capture count {len(events)} "
+                    f"!= {expected_event_count}"
+                )
+            seen_events = set()
+            for event in events:
+                key = (
+                    event.get("condition"), int(event["period"]),
+                    int(event["citizen_pos"])
+                )
+                if key in seen_events:
+                    sender_event_ok = False
+                    block_errors.append(
+                        f"{block_id}: duplicate sender event {key}"
+                    )
+                seen_events.add(key)
+                req = int(event["jammer_request_count"])
+                n_msgs = int(event["jammer_delivered_count"])
+                if req < n_msgs or n_msgs < 0:
+                    sender_event_ok = False
+                    block_errors.append(
+                        f"{block_id}: invalid request/delivery for {key}"
+                    )
+                if int(event["period"]) == 0:
+                    if (
+                        event["learning_target"] != "audit"
+                        or abs(float(event["theta_mu_post"]) -
+                               float(event["theta_mu_pre"])) > tolerance
+                    ):
+                        sender_event_ok = False
+                        block_errors.append(
+                            f"{block_id}: invalid first audit for {key}"
+                        )
+
         jammer_rows = payload.get("jammer_strategy", [])
         interval = int(manifest["surveillance_interval"])
 
@@ -245,6 +289,7 @@ def validate_pilot(
                 hold_ok,
                 refresh_ok,
                 config_ok,
+                sender_event_ok,
             )
         ),
         "design_id": manifest["design_id"],
@@ -258,6 +303,7 @@ def validate_pilot(
         "complete_matched_blocks": quartet_ok,
         "all_matched_fingerprints": fingerprint_ok,
         "configuration_verified": config_ok,
+        "sender_events_verified": sender_event_ok,
         "all_runs_finite": finite_ok,
         "all_runs_fixed_horizon": horizon_ok,
         "frozen_lambda_invariant": frozen_ok,
