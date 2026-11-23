@@ -1,0 +1,27 @@
+name: Paper B Gate 0E preanalysis matrix checks
+
+on:
+  push:
+    branches:
+      - paper-b-gate0e-peer-mechanism-preanalysis
+    paths:
+      - "paper_b/GATE0E_*"
+      - "paper_b/experiments/check_gate0e_design.py"
+      - ".github/workflows/paper_b_gate0e_design_preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate design-only matrix; do not run Mesa
+        run: |
+          python -m py_compile paper_b/experiments/check_gate0e_design.py
+          python -m paper_b.experiments.check_gate0e_design
