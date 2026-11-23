@@ -50,6 +50,8 @@ from sklearn.cluster import KMeans
 from mesa import Agent, Model
 from mesa.space import NetworkGrid
 
+from paper_b.adversary_objectives import optimize_credibility_aware_message
+
 
 PERIODS = 10
 NUM_NODES = 100
@@ -176,6 +178,7 @@ class InfoSampleModel(Model):
         tau_social: float = 0.0,
         frozen_ranking_mode: str = "first_audit",
         initial_audit_mode: str = "centroid",
+        jammer_credibility_penalty: float = 1.0,
         surveillance_interval: int = 5,
         convergence_tolerance: float = 1e-3,
         stop_on_convergence: bool = False,
@@ -248,6 +251,7 @@ class InfoSampleModel(Model):
         self.jammer_regime = str(raw_jammer_regime).lower()
         valid_jammer_regimes = {
             "adaptive",
+            "credibility_aware",
             "fixed_biased",
             "truth_clone",
             "null",
@@ -259,7 +263,9 @@ class InfoSampleModel(Model):
             )
         # Backwards-facing compatibility flag. New validity experiments should
         # inspect jammer_regime rather than infer scientific meaning from this.
-        self.jammer_active = self.jammer_regime == "adaptive"
+        self.jammer_active = self.jammer_regime in {
+            "adaptive", "credibility_aware"
+        }
 
         self.peer_evidence_mode = str(
             take("peer_evidence_mode", peer_evidence_mode)
@@ -288,6 +294,17 @@ class InfoSampleModel(Model):
         if self.initial_audit_mode not in {"centroid", "legacy"}:
             raise ValueError(
                 "initial_audit_mode must be 'centroid' or 'legacy'."
+            )
+
+        self.jammer_credibility_penalty = float(
+            take("jammer_credibility_penalty", jammer_credibility_penalty)
+        )
+        if (
+            not math.isfinite(self.jammer_credibility_penalty)
+            or self.jammer_credibility_penalty < 0
+        ):
+            raise ValueError(
+                "jammer_credibility_penalty must be finite and nonnegative."
             )
 
         self.surveillance_interval = max(
@@ -1074,12 +1091,61 @@ class DisruptiveJammer(InfoAgents):
             segment_std = (
                 float(current.std(ddof=0)) if current.size > 1 else 0.0
             )
-            msg_mean, diagnostics = self.optimal_message_mean(
-                citizen_means=current,
-                citizen_sds=current_sds,
-                truth=self.model.state_of_the_world,
-                underlying_position=self.mu_theta,
-            )
+            if self.model.jammer_regime == "credibility_aware":
+                q_theta = []
+                q_audit = []
+                n_audit = []
+                prior_delta_mu = []
+                prior_delta_sd = []
+                for citizen in citizens:
+                    if self not in citizen.info_source:
+                        # The segment includes every observed citizen, even
+                        # if this citizen cannot structurally reach the Jammer.
+                        q_theta.append(0.0)
+                        q_audit.append(0.0)
+                        n_audit.append(0.0)
+                        prior_delta_mu.append(0.0)
+                        prior_delta_sd.append(1.0)
+                        continue
+                    ranking = list(citizen._behavioral_ranking())
+                    probs = recursive_rank_probabilities(
+                        len(ranking), self.model.epsilon
+                    )
+                    pi_d = float(probs[ranking.index(self)])
+                    q_theta.append(
+                        float(-math.expm1(
+                            self.model.credit * math.log1p(-pi_d)
+                        )) if pi_d < 1.0 else 1.0
+                    )
+                    expected_count = (
+                        float(self.model.credit) / len(citizen.info_source)
+                    )
+                    q_audit.append(min(1.0, expected_count))
+                    n_audit.append(max(1.0, expected_count))
+                    prior_delta_mu.append(float(citizen.mu_delta[self]))
+                    prior_delta_sd.append(float(citizen.sd_delta[self]))
+
+                msg_mean, diagnostics = optimize_credibility_aware_message(
+                    citizen_means=current,
+                    citizen_sds=current_sds,
+                    prior_delta_means=prior_delta_mu,
+                    prior_delta_sds=prior_delta_sd,
+                    theta_inclusion=q_theta,
+                    audit_inclusion=q_audit,
+                    expected_audit_counts=n_audit,
+                    truth=self.model.state_of_the_world,
+                    underlying_position=self.mu_theta,
+                    audit_probability=self.model.p,
+                    credibility_penalty=self.model.jammer_credibility_penalty,
+                    single_message_variance=self.model.single_message_variance,
+                )
+            else:
+                msg_mean, diagnostics = self.optimal_message_mean(
+                    citizen_means=current,
+                    citizen_sds=current_sds,
+                    truth=self.model.state_of_the_world,
+                    underlying_position=self.mu_theta,
+                )
 
             params[cluster] = {"avg": msg_mean, "std": 1.0}
             state[cluster] = {
@@ -1094,6 +1160,7 @@ class DisruptiveJammer(InfoAgents):
                 "message_mean": msg_mean,
                 "message_sd": 1.0,
                 "cluster_size": int(current.size),
+                "optimization_rule": str(self.model.jammer_regime),
             }
 
         self._current_msg_param = params
@@ -1140,7 +1207,7 @@ class DisruptiveJammer(InfoAgents):
                 )
             return records
 
-        if self.model.jammer_regime != "adaptive":
+        if self.model.jammer_regime not in {"adaptive", "credibility_aware"}:
             self._current_msg_param = {}
             self._strategy_state = {}
             return []
@@ -1222,7 +1289,7 @@ class DisruptiveJammer(InfoAgents):
                 int(n_req),
             )
             return []
-        if regime != "adaptive":
+        if regime not in {"adaptive", "credibility_aware"}:
             raise RuntimeError(f"Unhandled jammer_regime={regime!r}.")
 
         if not self.citizen_intel:
