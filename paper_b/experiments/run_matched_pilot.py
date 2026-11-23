@@ -70,6 +70,34 @@ CONDITION_ORDER = (
     ("frozen", True),
     ("frozen", False),
 )
+SENDER_REGIMES = ("null", "fixed_biased", "adaptive", "truth_clone")
+
+
+def parse_sender_regimes(raw: str | None) -> tuple[str, ...] | None:
+    """Empty preserves the historical J1/J0 quartet; explicit means sender grid."""
+    if raw is None or not raw.strip():
+        return None
+    result = tuple(x.strip().lower() for x in raw.split(",") if x.strip())
+    if not result or len(result) != len(set(result)):
+        raise ValueError("--sender-regimes must be a nonempty unique list.")
+    unknown = set(result) - set(SENDER_REGIMES)
+    if unknown:
+        raise ValueError(f"Unknown sender regimes: {sorted(unknown)}")
+    return result
+
+
+def condition_specs(sender_regimes: tuple[str, ...] | None):
+    """(reliance mode, sender regime or None, jammer_active flag)."""
+    if sender_regimes is None:
+        return [
+            (reliance, None, jammer_active)
+            for reliance, jammer_active in CONDITION_ORDER
+        ]
+    return [
+        (reliance, sender, sender == "adaptive")
+        for reliance in ("adaptive", "frozen")
+        for sender in sender_regimes
+    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,6 +150,31 @@ def parse_args() -> argparse.Namespace:
         default="delta_comparison",
     )
     parser.add_argument("--surveillance-interval", type=int, default=5)
+    parser.add_argument(
+        "--sender-regimes",
+        default="",
+        help=(
+            "Comma-separated subset of null,fixed_biased,adaptive,truth_clone. "
+            "Omit to reproduce the historical adaptive/J1 vs truth_clone/J0 quartet. "
+            "For Gate 0B set: null,fixed_biased,adaptive."
+        ),
+    )
+    parser.add_argument(
+        "--peer-evidence-mode",
+        choices=("source_posterior", "legacy_batch"),
+        default="legacy_batch",
+    )
+    parser.add_argument("--tau-social", type=float, default=0.0)
+    parser.add_argument(
+        "--frozen-ranking-mode",
+        choices=("first_audit", "pre_disruption"),
+        default="first_audit",
+    )
+    parser.add_argument(
+        "--initial-audit-mode",
+        choices=("centroid", "legacy"),
+        default="centroid",
+    )
     parser.add_argument(
         "--workers",
         type=int,
@@ -323,7 +376,9 @@ def run_condition(
     save_edge_log: bool,
     jammer_regime: str | None = None,
     peer_evidence_mode: str = "legacy_batch",
+    tau_social: float = 0.0,
     frozen_ranking_mode: str = "first_audit",
+    initial_audit_mode: str = "centroid",
     gateway_positions: set[int] | None = None,
     record_expert_rank_checkpoints: bool = False,
     record_channel_decomposition: bool = False,
@@ -339,7 +394,9 @@ def run_condition(
             "surveil_ability": int(k),
             "stop_on_convergence": False,
             "peer_evidence_mode": peer_evidence_mode,
+            "tau_social": float(tau_social),
             "frozen_ranking_mode": frozen_ranking_mode,
+            "initial_audit_mode": initial_audit_mode,
         }
     )
 
@@ -816,7 +873,8 @@ def run_block(task: dict) -> dict:
     )
 
     results = []
-    for reliance_mode, jammer_active in CONDITION_ORDER:
+    specs = condition_specs(task.get("sender_regimes"))
+    for reliance_mode, sender, jammer_active in specs:
         results.append(
             run_condition(
                 base_config=base,
@@ -825,6 +883,11 @@ def run_block(task: dict) -> dict:
                 environment=environment,
                 reliance_mode=reliance_mode,
                 jammer_active=jammer_active,
+                jammer_regime=sender,
+                peer_evidence_mode=str(task["peer_evidence_mode"]),
+                tau_social=float(task["tau_social"]),
+                frozen_ranking_mode=str(task["frozen_ranking_mode"]),
+                initial_audit_mode=str(task["initial_audit_mode"]),
                 k=int(task["k"]),
                 design_id=design_id,
                 block_id=block_id,
@@ -836,11 +899,11 @@ def run_block(task: dict) -> dict:
     initial_fps = {r["run"]["initial_state_fingerprint"] for r in results}
     if len(structural_fps) != 1:
         raise RuntimeError(
-            f"{block_id}: structural fingerprints differ across matched quartet."
+            f"{block_id}: structural fingerprints differ across matched sender grid."
         )
     if len(initial_fps) != 1:
         raise RuntimeError(
-            f"{block_id}: initial-state fingerprints differ across matched quartet."
+            f"{block_id}: initial-state fingerprints differ across matched sender grid."
         )
 
     payload = {
@@ -886,15 +949,27 @@ def build_design(
     environments: list[str],
 ) -> dict:
     return {
-        "design_version": 2,
+        "design_version": 3,
         "purpose": "Paper B matched-seed production-calibration pilot",
+        "analysis_mode": (
+            "sender_grid" if parse_sender_regimes(args.sender_regimes)
+            else "legacy_quartet"
+        ),
+        "sender_regimes": parse_sender_regimes(args.sender_regimes),
         "scientific_code_fingerprint": code_fingerprint(),
         "software_versions": software_versions(),
         "seeds": seeds,
         "initial_regimes": regimes,
         "network_environments": environments,
         "matched_conditions": [
-            _condition_label(mode, jammer) for mode, jammer in CONDITION_ORDER
+            (
+                f"{mode}__{sender}"
+                if sender is not None
+                else _condition_label(mode, jammer)
+            )
+            for mode, sender, jammer in condition_specs(
+                parse_sender_regimes(args.sender_regimes)
+            )
         ],
         "n_citizens": int(args.n_citizens),
         "horizon_T": int(args.horizon),
@@ -903,6 +978,10 @@ def build_design(
         "credit": int(args.credit),
         "comparison_rule": args.comparison_rule,
         "surveillance_interval": int(args.surveillance_interval),
+        "peer_evidence_mode": str(args.peer_evidence_mode),
+        "tau_social": float(args.tau_social),
+        "frozen_ranking_mode": str(args.frozen_ranking_mode),
+        "initial_audit_mode": str(args.initial_audit_mode),
         "save_edge_log": bool(args.save_edge_log),
     }
 
@@ -921,6 +1000,11 @@ def main() -> None:
         raise ValueError("--epsilon must lie in [0, 0.5].")
     if args.workers <= 0:
         raise ValueError("--workers must be positive.")
+    if not math.isfinite(args.tau_social) or args.tau_social < 0:
+        raise ValueError("--tau-social must be finite and nonnegative.")
+    sender_regimes = parse_sender_regimes(args.sender_regimes)
+    if sender_regimes is not None and "null" not in sender_regimes:
+        raise ValueError("Sender-grid mode requires a null baseline.")
 
     design = build_design(args, seeds, regimes, environments)
     design_id = canonical_hash(design)[:12]
@@ -937,7 +1021,9 @@ def main() -> None:
     ]
     design["design_id"] = design_id
     design["expected_blocks"] = len(blocks)
-    design["expected_runs"] = len(blocks) * len(CONDITION_ORDER)
+    design["expected_runs"] = len(blocks) * len(
+        condition_specs(sender_regimes)
+    )
     design["block_ids"] = [b["block_id"] for b in blocks]
 
     run_root = Path(args.output_dir) / f"pilot_{design_id}"
@@ -986,6 +1072,11 @@ def main() -> None:
                 "credit": args.credit,
                 "comparison_rule": args.comparison_rule,
                 "surveillance_interval": args.surveillance_interval,
+                "sender_regimes": sender_regimes,
+                "peer_evidence_mode": args.peer_evidence_mode,
+                "tau_social": args.tau_social,
+                "frozen_ranking_mode": args.frozen_ranking_mode,
+                "initial_audit_mode": args.initial_audit_mode,
                 "save_edge_log": args.save_edge_log,
             }
         )
@@ -995,7 +1086,11 @@ def main() -> None:
     print(f"  output           : {run_root}")
     print(f"  networks         : {','.join(environments)}")
     print(f"  matched blocks   : {len(blocks)}")
-    print(f"  individual runs  : {len(blocks) * 4}")
+    print(f"  individual runs  : {design['expected_runs']}")
+    print(f"  sender regimes   : {sender_regimes or 'legacy quartet'}")
+    print(f"  evidence / tau   : {args.peer_evidence_mode} / {args.tau_social}")
+    print(f"  frozen ranking   : {args.frozen_ranking_mode}")
+    print(f"  initial audit    : {args.initial_audit_mode}")
     print(f"  pending blocks   : {len(pending)}")
     print(f"  resumed/skipped  : {skipped}")
     print(f"  workers          : {args.workers}")
@@ -1030,7 +1125,11 @@ def main() -> None:
     from paper_b.experiments.check_pilot_output import validate_pilot
     from paper_b.experiments.package_pilot import package_pilot
 
-    consolidate(run_root)
+    if sender_regimes is None:
+        consolidate(run_root)
+    else:
+        from paper_b.experiments.consolidate_gate0b import consolidate_gate0b
+        consolidate_gate0b(run_root)
     report = validate_pilot(run_root, write_report=True)
 
     print()
