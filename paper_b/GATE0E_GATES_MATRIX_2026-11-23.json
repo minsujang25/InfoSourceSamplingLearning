@@ -4,8 +4,6 @@
   "parent_branch": "paper-b-gate0d-mechanism-identification",
   "experiment_namespace": "gate0e_peer_channel",
   "invariants": {
-    "n_citizens": 100,
-    "horizon_mandatory": 400,
     "K": 1,
     "epsilon": 0.05,
     "credit": 20,
@@ -28,7 +26,9 @@
       "extended_stale",
       "extended_live"
     ],
-    "note": "The exploratory flat-initial-belief diagnostic and highS/lowS confirmatory designs are NOT automatically interchangeable."
+    "note": "The exploratory flat-initial-belief diagnostic and highS/lowS confirmatory designs are NOT automatically interchangeable.",
+    "canonical_n_citizens": 100,
+    "production_horizon": 400
   },
   "channel_contract": {
     "intervention_start_period": 1,
