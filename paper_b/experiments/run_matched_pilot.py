@@ -378,7 +378,7 @@ def run_condition(
     save_edge_log: bool,
     jammer_regime: str | None = None,
     peer_evidence_mode: str = "legacy_batch",
-    tau_social: float = 0.0,
+    tau_social: float | None = None,
     frozen_ranking_mode: str = "first_audit",
     initial_audit_mode: str = "centroid",
     gateway_positions: set[int] | None = None,
@@ -396,7 +396,6 @@ def run_condition(
             "surveil_ability": int(k),
             "stop_on_convergence": False,
             "peer_evidence_mode": peer_evidence_mode,
-            "tau_social": float(tau_social),
             "frozen_ranking_mode": frozen_ranking_mode,
             "initial_audit_mode": initial_audit_mode,
         }
@@ -404,6 +403,9 @@ def run_condition(
 
     if jammer_regime is not None:
         config["jammer_regime"] = str(jammer_regime)
+    # Preserve caller-supplied canonical tau_social unless explicitly overridden.
+    if tau_social is not None:
+        config["tau_social"] = float(tau_social)
 
     model = InfoSampleModel(model_attribute=config, rng=seed)
     structure_fp = structural_fingerprint(model)
