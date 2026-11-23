@@ -116,26 +116,54 @@ def validate_pilot(
         jammer_rows = payload.get("jammer_strategy", [])
         interval = int(manifest["surveillance_interval"])
 
-        # Only active-Jammer runs emit strategy rows.  At every logged period,
-        # refresh should occur exactly on scheduled surveillance periods.
+        # Centroid initialization produces one non-disruptive audit strategy
+        # at period 0 (including null/fixed sender slots).  Strategic
+        # surveillance starts at period 1 and then repeats every interval.
+        # Archived legacy runs retain the historical 0, interval, ... cycle.
         for row in jammer_rows:
             period = int(row["period"])
-            expected_refresh = period % interval == 0
+            mode = str(row.get("initial_audit_mode", "legacy"))
+            phase = str(row.get("strategy_phase", "adaptive_disruption"))
+            if phase == "initial_audit":
+                expected_refresh = period == 0 and mode == "centroid"
+                if not math.isclose(
+                    float(row["message_mean"]),
+                    float(row["segment_mean"]),
+                    rel_tol=0.0,
+                    abs_tol=tolerance,
+                ):
+                    refresh_ok = False
+                    block_errors.append(
+                        f"{block_id}: initial audit mean differs from centroid"
+                    )
+            else:
+                expected_refresh = (
+                    period >= 1 and (period - 1) % interval == 0
+                    if mode == "centroid"
+                    else period % interval == 0
+                )
             if _truthy(row.get("refresh")) != expected_refresh:
                 refresh_ok = False
                 block_errors.append(
                     f"{block_id}: bad refresh flag at period {period}"
                 )
 
-        # Within each surveillance window and condition, the optimized message
-        # mean must remain fixed for each cluster.
+        # Compare message means only within a strategic refresh window.
+        # Initial audit is a distinct calibration phase, never part of
+        # the period-1 adversarial window.
         grouped = defaultdict(list)
         for row in jammer_rows:
             period = int(row["period"])
-            window = period // interval
+            mode = str(row.get("initial_audit_mode", "legacy"))
+            phase = str(row.get("strategy_phase", "adaptive_disruption"))
+            if phase == "initial_audit":
+                window = ("initial_audit", 0)
+            else:
+                offset = 1 if mode == "centroid" else 0
+                window = ("adaptive_disruption", (period - offset) // interval)
             key = (
                 row.get("reliance_mode"),
-                bool(row.get("jammer_active")),
+                row.get("jammer_regime", row.get("jammer_active")),
                 window,
                 int(row["cluster"]),
             )
