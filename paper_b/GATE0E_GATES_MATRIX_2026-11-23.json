@@ -1,0 +1,190 @@
+{
+  "status": "design_only_not_yet_implemented_or_run",
+  "date": "2026-11-23",
+  "parent_branch": "paper-b-gate0d-mechanism-identification",
+  "experiment_namespace": "gate0e_peer_channel",
+  "invariants": {
+    "n_citizens": 100,
+    "horizon_mandatory": 400,
+    "K": 1,
+    "epsilon": 0.05,
+    "credit": 20,
+    "surveillance_interval": 5,
+    "peer_degree": 2,
+    "peer_evidence_mode": "source_posterior",
+    "tau_social": 1,
+    "initial_audit_mode": "centroid",
+    "audit_probability": "1/(t+1)",
+    "frozen_ranking_primary": "first_audit",
+    "frozen_ranking_sensitivity": "pre_disruption",
+    "sender_regimes": [
+      "null",
+      "adaptive",
+      "credibility_aware"
+    ],
+    "network_treatments": [
+      "elite_only",
+      "extended_muted",
+      "extended_stale",
+      "extended_live"
+    ],
+    "note": "The exploratory flat-initial-belief diagnostic and highS/lowS confirmatory designs are NOT automatically interchangeable."
+  },
+  "channel_contract": {
+    "intervention_start_period": 1,
+    "matched_audit_period": 0,
+    "mute_consumes_draws_before_discard": true,
+    "fixed_peer_initial_mean_and_sd": true,
+    "stale_likelihood_uses_delivered_sd": true,
+    "preserve_source_count_and_budget_in_extended": true,
+    "live_matches_existing_extended_mode": true,
+    "status": "implementation_required"
+  },
+  "phases": [
+    {
+      "id": "gate0e_smoke",
+      "seeds": [
+        6901,
+        6902
+      ],
+      "prior_levels": [
+        "flat"
+      ],
+      "N": 24,
+      "T": 6,
+      "networks": [
+        "elite_only",
+        "extended_muted",
+        "extended_stale",
+        "extended_live"
+      ],
+      "senders": [
+        "null",
+        "adaptive",
+        "credibility_aware"
+      ],
+      "receivers": [
+        "adaptive",
+        "frozen"
+      ],
+      "expected_runs": 48,
+      "gate": "event parity, matched source map, t0 equivalence, bounded period test"
+    },
+    {
+      "id": "gate0e_mechanism",
+      "seed_range_inclusive": [
+        6921,
+        6940
+      ],
+      "prior_levels": [
+        "flat"
+      ],
+      "N": 100,
+      "T": 200,
+      "networks": [
+        "elite_only",
+        "extended_muted",
+        "extended_stale",
+        "extended_live"
+      ],
+      "senders": [
+        "null",
+        "adaptive",
+        "credibility_aware"
+      ],
+      "receivers": [
+        "adaptive",
+        "frozen"
+      ],
+      "expected_runs": 480,
+      "gate": "all mechanism contrasts and paired finite diagnostics"
+    },
+    {
+      "id": "gate0e_stability",
+      "seed_range_inclusive": [
+        7501,
+        7600
+      ],
+      "prior_levels": [
+        "flat"
+      ],
+      "N": 100,
+      "T": 400,
+      "networks": [
+        "elite_only",
+        "extended_muted",
+        "extended_stale",
+        "extended_live"
+      ],
+      "senders": [
+        "null",
+        "adaptive",
+        "credibility_aware"
+      ],
+      "receivers": [
+        "adaptive",
+        "frozen"
+      ],
+      "expected_runs": 2400,
+      "gate": "stability and complete paired bootstrap; no outcome-based treatment inclusion"
+    },
+    {
+      "id": "gate1_original_confirmatory",
+      "seed_range_inclusive": [
+        7001,
+        7500
+      ],
+      "prior_levels": [
+        "highS",
+        "lowS"
+      ],
+      "N": 100,
+      "T": 400,
+      "networks": [
+        "elite_only",
+        "extended_live"
+      ],
+      "senders": [
+        "null",
+        "fixed_biased",
+        "adaptive"
+      ],
+      "receivers": [
+        "adaptive",
+        "frozen"
+      ],
+      "expected_runs": 12000,
+      "gate": "highS/lowS implementation crosswalk and canonical frozen field validation"
+    }
+  ],
+  "measures": {
+    "primary": "Population MSE_T and D=MSE_sender-MSE_null, each relative to matched seed, mode, receiver, prior",
+    "event_checkpoints": [
+      0,
+      1,
+      2,
+      5,
+      10,
+      25,
+      50,
+      100,
+      200,
+      399
+    ],
+    "contrast_names": [
+      "slots",
+      "static_signal",
+      "endogenous_update",
+      "total_peer",
+      "adaptive_by_peer",
+      "sender_by_peer"
+    ],
+    "uncertainty": "whole-seed paired bootstrap, 10000 resamples; seed as statistical unit"
+  },
+  "data_firewall": {
+    "freeze_experiment_IIIa": true,
+    "experiment_IIIb_separate": true,
+    "do_not_modify_v5_2_abstract_or_theory": true,
+    "no_production_claim_before_code_and_scientific_gates": true
+  }
+}
