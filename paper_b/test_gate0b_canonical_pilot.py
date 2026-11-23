@@ -111,6 +111,30 @@ class Gate0BDesignTests(unittest.TestCase):
                     for x in t0
                 ))
 
+    def test_legacy_caller_preserves_supplied_tau_social(self):
+        cfg = base_model_config(
+            regime="flat", seed=6909, n_citizens=12,
+            max_steps=2, k=1, epsilon=0.05, credit=20,
+            comparison_rule="delta_comparison",
+            surveillance_interval=5,
+        )
+        cfg["tau_social"] = 1.0
+        result = run_condition(
+            base_config=cfg,
+            seed=6909,
+            regime="flat",
+            environment="extended",
+            reliance_mode="adaptive",
+            jammer_active=False,
+            jammer_regime="fixed_biased",
+            peer_evidence_mode="source_posterior",
+            k=1,
+            design_id="tau_guardrail",
+            block_id="tau_guardrail",
+            save_edge_log=False,
+        )
+        self.assertEqual(float(result["run"]["tau_social"]), 1.0)
+
     def test_null_differences_and_network_interaction(self):
         damage = sender_damage(synthetic_runs())
         self.assertEqual(len(damage), 8)
