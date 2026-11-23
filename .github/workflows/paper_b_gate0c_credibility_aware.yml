@@ -1,0 +1,142 @@
+name: Paper B Gate 0C credibility-aware diagnostic
+
+on:
+  push:
+    branches:
+      - paper-b-gate0c-credibility-aware
+    paths:
+      - "model/**"
+      - "paper_b/**"
+      - ".github/workflows/paper_b_gate0c_credibility_aware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate0c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install model dependencies
+        run: |
+          python -m pip install \
+            "mesa==3.5.1" "numpy==1.26.4" "scipy==1.13.1" \
+            "scikit-learn==1.5.2" "networkx==3.3"
+      - name: Compile code and run all Gate 0A, 0B, 0C tests
+        run: |
+          python -m py_compile \
+            model/InfoSourceSamplingLearning.py \
+            paper_b/adversary_objectives.py \
+            paper_b/experiments/run_matched_pilot.py \
+            paper_b/experiments/consolidate_gate0b.py \
+            paper_b/experiments/check_pilot_output.py \
+            paper_b/test_gate0c_credibility_aware.py
+          python -m unittest \
+            paper_b.test_gate0a_initial_audit \
+            paper_b.test_gate0b_canonical_pilot \
+            paper_b.test_gate0c_credibility_aware -v
+      - name: N100 T26 canonical first-audit pilot
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --surveillance-interval 5 \
+            --sender-regimes null,fixed_biased,adaptive,credibility_aware \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --jammer-credibility-penalty 1 \
+            --frozen-ranking-mode first_audit \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0c_primary
+      - name: N100 T26 pre-disruption frozen sensitivity
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --surveillance-interval 5 \
+            --sender-regimes null,fixed_biased,adaptive,credibility_aware \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --jammer-credibility-penalty 1 \
+            --frozen-ranking-mode pre_disruption \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0c_sensitivity
+      - name: Verify both designs and print numerical findings
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import csv, json, gzip, statistics
+          all_manifests = []
+          for label, base in [
+              ("first_audit", Path("/tmp/paperb_gate0c_primary")),
+              ("pre_disruption", Path("/tmp/paperb_gate0c_sensitivity")),
+          ]:
+              roots = list(base.glob("pilot_*"))
+              assert len(roots) == 1, roots
+              root = roots[0]
+              m = json.loads((root/"pilot_manifest.json").read_text())
+              g = json.loads((root/"pilot_gate.json").read_text())
+              assert g["pass"] and g["observed_runs"] == 32, g
+              assert m["frozen_ranking_mode"] == label
+              assert m["jammer_credibility_penalty"] == 1.0
+              assert m["peer_evidence_mode"] == "source_posterior"
+              assert m["initial_audit_mode"] == "centroid"
+              all_manifests.append(m)
+              with (root/"gate0c_aware_minus_myopic.csv").open() as f:
+                  contrasts = list(csv.DictReader(f))
+              assert len(contrasts) == 8
+              with (root/"gate0c_aware_by_peer_interaction.csv").open() as f:
+                  interactions = list(csv.DictReader(f))
+              assert len(interactions) == 4
+              with gzip.open(root/"jammer_strategy_trajectory.csv.gz", "rt") as f:
+                  strategies = list(csv.DictReader(f))
+              t1 = {}
+              for sender in ("adaptive", "credibility_aware"):
+                  means = [float(r["message_mean"]) for r in strategies
+                           if int(r["period"]) == 1
+                           and r["jammer_regime"] == sender]
+                  assert len(means) == 8, (sender, len(means))
+                  t1[sender] = statistics.mean(means)
+              print(label, "mean t1:", t1)
+              with (root/"gate0b_sender_damage.csv").open() as f:
+                  damage = list(csv.DictReader(f))
+              for env in ("elite_only", "extended"):
+                  for recv in ("adaptive", "frozen"):
+                      out = {
+                          sender: round(statistics.mean(
+                              float(r["delta_mse"]) for r in damage
+                              if r["network_environment"] == env
+                              and r["reliance_mode"] == recv
+                              and r["sender_regime"] == sender
+                          ), 6)
+                          for sender in (
+                              "fixed_biased", "adaptive", "credibility_aware"
+                          )
+                      }
+                      print("D", label, env, recv, out)
+              print(label, "design", m["design_id"], "gate", g["pass"])
+          assert all_manifests[0]["design_id"] != all_manifests[1]["design_id"]
+          print("Gate 0C N100 T26 paired primary+sensitivity diagnostics: PASS")
+          PY
+      - name: Upload Gate 0C diagnostic outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperb-gate0c-n100-t26-firstaudit-and-predisruption
+          path: |
+            /tmp/paperb_gate0c_primary/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0c_sensitivity/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0c_primary/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0c_sensitivity/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0c_primary/pilot_*/pilot_gate.json
+            /tmp/paperb_gate0c_sensitivity/pilot_*/pilot_gate.json
+          retention-days: 30
+          if-no-files-found: error
