@@ -65,12 +65,11 @@ def validate_pilot(
     refresh_ok = True
     block_errors = []
 
-    expected_conditions = {
-        "adaptive__J1",
-        "adaptive__J0",
-        "frozen__J1",
-        "frozen__J0",
-    }
+    expected_conditions = set(manifest.get("matched_conditions") or (
+        "adaptive__J1", "adaptive__J0", "frozen__J1", "frozen__J0"
+    ))
+    sender_grid = manifest.get("analysis_mode") == "sender_grid"
+    config_ok = True
 
     for payload in payloads:
         block_id = payload.get("block_id")
@@ -78,9 +77,15 @@ def validate_pilot(
         all_runs.extend(runs)
 
         conditions = {row.get("condition") for row in runs}
-        if len(runs) != 4 or conditions != expected_conditions:
+        if (
+            len(runs) != len(expected_conditions)
+            or conditions != expected_conditions
+            or len(conditions) != len(runs)
+        ):
             quartet_ok = False
-            block_errors.append(f"{block_id}: incomplete matched quartet")
+            block_errors.append(
+                f"{block_id}: incomplete or duplicated matched conditions"
+            )
 
         structural = {row.get("structural_fingerprint") for row in runs}
         initial = {row.get("initial_state_fingerprint") for row in runs}
@@ -89,6 +94,35 @@ def validate_pilot(
             block_errors.append(f"{block_id}: fingerprint mismatch")
 
         for row in runs:
+            if sender_grid:
+                expected = {
+                    "peer_evidence_mode": manifest["peer_evidence_mode"],
+                    "frozen_ranking_mode": manifest["frozen_ranking_mode"],
+                    "initial_audit_mode": manifest["initial_audit_mode"],
+                }
+                for key, value in expected.items():
+                    if str(row.get(key)) != str(value):
+                        config_ok = False
+                        block_errors.append(
+                            f"{block_id}/{row.get('condition')}: {key} mismatch"
+                        )
+                tau = float(row.get("tau_social", math.nan))
+                if not math.isclose(
+                    tau, float(manifest["tau_social"]),
+                    rel_tol=0.0, abs_tol=tolerance
+                ):
+                    config_ok = False
+                    block_errors.append(
+                        f"{block_id}/{row.get('condition')}: tau_social mismatch"
+                    )
+                expected_name = (
+                    f"{row['reliance_mode']}__{row['jammer_regime']}"
+                )
+                if row.get("condition") != expected_name:
+                    config_ok = False
+                    block_errors.append(
+                        f"{block_id}: mislabeled sender condition"
+                    )
             if int(row.get("n_nonfinite", 1)) != 0:
                 finite_ok = False
                 block_errors.append(
@@ -195,6 +229,7 @@ def validate_pilot(
                 frozen_ok,
                 hold_ok,
                 refresh_ok,
+                config_ok,
             )
         ),
         "design_id": manifest["design_id"],
@@ -205,7 +240,9 @@ def validate_pilot(
         "unique_block_ids": unique_blocks,
         "complete_block_set": complete_block_set,
         "complete_matched_quartets": quartet_ok,
+        "complete_matched_blocks": quartet_ok,
         "all_matched_fingerprints": fingerprint_ok,
+        "configuration_verified": config_ok,
         "all_runs_finite": finite_ok,
         "all_runs_fixed_horizon": horizon_ok,
         "frozen_lambda_invariant": frozen_ok,
