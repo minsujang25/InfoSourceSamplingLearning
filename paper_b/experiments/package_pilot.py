@@ -37,6 +37,8 @@ BUNDLE_FILES = (
     "gate0d_staged_damage_contrasts.csv",
     "gate0d_sender_events.csv.gz",
     "gate0d_event_period_summary.csv",
+    "gate0e_channel_contrasts.csv",
+    "gate0e_peer_event_period_summary.csv",
 )
 
 
