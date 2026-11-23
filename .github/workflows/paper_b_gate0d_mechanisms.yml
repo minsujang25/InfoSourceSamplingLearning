@@ -1,0 +1,127 @@
+name: Paper B Gate 0D staged mechanisms and actual sender events
+
+on:
+  push:
+    branches:
+      - paper-b-gate0d-mechanism-identification
+    paths:
+      - "model/**"
+      - "paper_b/**"
+      - ".github/workflows/paper_b_gate0d_mechanisms.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate0d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned ABM dependencies
+        run: |
+          python -m pip install \
+            "mesa==3.5.1" "numpy==1.26.4" "scipy==1.13.1" \
+            "scikit-learn==1.5.2" "networkx==3.3"
+      - name: Compile and run all Gates 0A–0D regression suites
+        run: |
+          python -m py_compile \
+            model/InfoSourceSamplingLearning.py \
+            paper_b/adversary_objectives.py \
+            paper_b/experiments/sender_event_instrument.py \
+            paper_b/experiments/consolidate_gate0d.py \
+            paper_b/experiments/consolidate_gate0b.py \
+            paper_b/experiments/run_matched_pilot.py \
+            paper_b/experiments/check_pilot_output.py
+          python -m unittest \
+            paper_b.test_gate0a_initial_audit \
+            paper_b.test_gate0b_canonical_pilot \
+            paper_b.test_gate0c_credibility_aware \
+            paper_b.test_gate0d_mechanism -v
+      - name: Gate 0D N100 T26 event-level 56-run pilot
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 --k 1 \
+            --epsilon .05 --credit 20 --surveillance-interval 5 \
+            --sender-regimes null,fixed_biased,adaptive,timing_only,exposure_uniform,exposure_ranked,credibility_aware \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --jammer-credibility-penalty 1 \
+            --frozen-ranking-mode first_audit --initial-audit-mode centroid \
+            --sender-event-period-limit 26 \
+            --workers 2 --no-edge-log \
+            --output-dir /tmp/paperb_gate0d_t26
+      - name: Gate 0D N100 T200 4-seed diagnostic
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902,6903,6904 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 200 --k 1 \
+            --epsilon .05 --credit 20 --surveillance-interval 5 \
+            --sender-regimes null,fixed_biased,adaptive,timing_only,exposure_uniform,exposure_ranked,credibility_aware \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --jammer-credibility-penalty 1 \
+            --frozen-ranking-mode first_audit --initial-audit-mode centroid \
+            --sender-event-period-limit 0 \
+            --workers 2 --no-edge-log \
+            --output-dir /tmp/paperb_gate0d_t200
+      - name: Check stage contrasts and event-accounting invariants
+        run: |
+          python - <<'PY'
+          import csv, gzip, json
+          from pathlib import Path
+          for horizon, expected_runs, n_stages, capture in (
+              (26, 56, 32, True), (200, 112, 64, False)
+          ):
+              roots = list(Path(f"/tmp/paperb_gate0d_t{horizon}").glob("pilot_*"))
+              assert len(roots) == 1, roots
+              root = roots[0]
+              m = json.loads((root/"pilot_manifest.json").read_text())
+              gate = json.loads((root/"pilot_gate.json").read_text())
+              assert gate["pass"], gate
+              assert gate["observed_runs"] == expected_runs
+              with (root/"gate0d_staged_damage_contrasts.csv").open() as f:
+                  stages = list(csv.DictReader(f))
+              assert len(stages) == n_stages, len(stages)
+              assert {s["mechanism"] for s in stages} == {
+                  "timing_discount", "uniform_exposure",
+                  "rank_specific_exposure", "credibility_penalty"
+              }
+              summary = json.loads((root/"pilot_summary.json").read_text())
+              if capture:
+                  assert summary["n_gate0d_sender_events"] == 145600, summary
+                  assert gate["sender_events_verified"], gate
+                  with (root/"gate0d_event_period_summary.csv").open() as f:
+                      e = list(csv.DictReader(f))
+                  t0 = [r for r in e if int(r["period"]) == 0]
+                  assert len(t0) == 56
+                  assert all(int(x["n_audit"]) == 100 for x in t0)
+                  for r in t0:
+                      if r["jammer_regime"] != "null":
+                          assert int(r["delivered_messages"]) > 0
+                  print("T26 observed rows", len(e))
+              else:
+                  assert summary["n_gate0d_sender_events"] == 0, summary
+              print(f"Gate 0D T{horizon} PASS",
+                    "design", m["design_id"],
+                    "runs", gate["observed_runs"],
+                    "stage contrasts", len(stages))
+          PY
+      - name: Upload pilot outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperb-gate0d-mechanism-diagnostics-t26-t200
+          path: |
+            /tmp/paperb_gate0d_t26/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0d_t200/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0d_t26/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0d_t200/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0d_t26/pilot_*/pilot_gate.json
+            /tmp/paperb_gate0d_t200/pilot_*/pilot_gate.json
+          retention-days: 30
+          if-no-files-found: error
