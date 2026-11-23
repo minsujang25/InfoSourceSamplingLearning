@@ -65,6 +65,8 @@ def peer_damage_differences(
 ) -> list[dict]:
     """Peer-minus-elite contrast in excess damage D for each matched seed."""
     keys = ("seed", "initial_regime", "reliance_mode", "sender_regime")
+    if damage and "horizon_step" in damage[0]:
+        keys += ("horizon_step",)
     idx = {_key(row, *keys) + (row["network_environment"],): row
            for row in damage}
     output = []
