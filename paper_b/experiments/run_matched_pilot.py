@@ -272,6 +272,8 @@ def code_fingerprint() -> str:
         repo_root / "paper_b" / "metrics.py",
         repo_root / "paper_b" / "experiments" / "run_local_diagnostic.py",
         repo_root / "paper_b" / "experiments" / "run_matched_pilot.py",
+        repo_root / "paper_b" / "experiments" / "consolidate_gate0b.py",
+        repo_root / "paper_b" / "experiments" / "check_pilot_output.py",
         repo_root / "environment.yml",
     )
     payload = []
