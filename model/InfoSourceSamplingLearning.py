@@ -252,6 +252,9 @@ class InfoSampleModel(Model):
         valid_jammer_regimes = {
             "adaptive",
             "credibility_aware",
+            "timing_only",
+            "exposure_uniform",
+            "exposure_ranked",
             "fixed_biased",
             "truth_clone",
             "null",
@@ -264,7 +267,8 @@ class InfoSampleModel(Model):
         # Backwards-facing compatibility flag. New validity experiments should
         # inspect jammer_regime rather than infer scientific meaning from this.
         self.jammer_active = self.jammer_regime in {
-            "adaptive", "credibility_aware"
+            "adaptive", "credibility_aware",
+            "timing_only", "exposure_uniform", "exposure_ranked",
         }
 
         self.peer_evidence_mode = str(
@@ -1091,7 +1095,10 @@ class DisruptiveJammer(InfoAgents):
             segment_std = (
                 float(current.std(ddof=0)) if current.size > 1 else 0.0
             )
-            if self.model.jammer_regime == "credibility_aware":
+            if self.model.jammer_regime in {
+                "credibility_aware", "exposure_ranked",
+                "exposure_uniform", "timing_only"
+            }:
                 q_theta = []
                 q_audit = []
                 n_audit = []
@@ -1112,11 +1119,16 @@ class DisruptiveJammer(InfoAgents):
                         len(ranking), self.model.epsilon
                     )
                     pi_d = float(probs[ranking.index(self)])
-                    q_theta.append(
-                        float(-math.expm1(
-                            self.model.credit * math.log1p(-pi_d)
-                        )) if pi_d < 1.0 else 1.0
-                    )
+                    if self.model.jammer_regime == "timing_only":
+                        q_theta.append(1.0)
+                    else:
+                        if self.model.jammer_regime == "exposure_uniform":
+                            pi_d = 1.0 / len(ranking)
+                        q_theta.append(
+                            float(-math.expm1(
+                                self.model.credit * math.log1p(-pi_d)
+                            )) if pi_d < 1.0 else 1.0
+                        )
                     expected_count = (
                         float(self.model.credit) / len(citizen.info_source)
                     )
@@ -1136,7 +1148,11 @@ class DisruptiveJammer(InfoAgents):
                     truth=self.model.state_of_the_world,
                     underlying_position=self.mu_theta,
                     audit_probability=self.model.p,
-                    credibility_penalty=self.model.jammer_credibility_penalty,
+                    credibility_penalty=(
+                        self.model.jammer_credibility_penalty
+                        if self.model.jammer_regime == "credibility_aware"
+                        else 0.0
+                    ),
                     single_message_variance=self.model.single_message_variance,
                 )
             else:
@@ -1207,7 +1223,10 @@ class DisruptiveJammer(InfoAgents):
                 )
             return records
 
-        if self.model.jammer_regime not in {"adaptive", "credibility_aware"}:
+        if self.model.jammer_regime not in {
+            "adaptive", "credibility_aware", "timing_only",
+            "exposure_uniform", "exposure_ranked",
+        }:
             self._current_msg_param = {}
             self._strategy_state = {}
             return []
@@ -1289,7 +1308,10 @@ class DisruptiveJammer(InfoAgents):
                 int(n_req),
             )
             return []
-        if regime not in {"adaptive", "credibility_aware"}:
+        if regime not in {
+            "adaptive", "credibility_aware", "timing_only",
+            "exposure_uniform", "exposure_ranked",
+        }:
             raise RuntimeError(f"Unhandled jammer_regime={regime!r}.")
 
         if not self.citizen_intel:
