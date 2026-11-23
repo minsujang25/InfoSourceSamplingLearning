@@ -650,6 +650,7 @@ def run_condition(
         "reliance_mode": reliance_mode,
         "jammer_active": bool(jammer_active),
         "jammer_regime": str(model.jammer_regime),
+        "initial_audit_mode": str(model.initial_audit_mode),
         "peer_evidence_mode": str(model.peer_evidence_mode),
         "tau_social": float(model.tau_social),
         "frozen_ranking_mode": str(model.frozen_ranking_mode),
