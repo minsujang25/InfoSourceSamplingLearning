@@ -1,0 +1,115 @@
+name: Paper B Gate 0E live/muted/stale channel implementation
+
+on:
+  push:
+    branches:
+      - paper-b-gate0e-peer-channel-implementation
+    paths:
+      - "model/**"
+      - "paper_b/**"
+      - ".github/workflows/paper_b_gate0e_peer_channel.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate0e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned model dependencies
+        run: |
+          python -m pip install \
+            "mesa==3.5.1" "numpy==1.26.4" "scipy==1.13.1" \
+            "scikit-learn==1.5.2" "networkx==3.3"
+      - name: Syntax, frozen matrix and regression tests
+        run: |
+          python -m py_compile \
+            model/InfoSourceSamplingLearning.py \
+            paper_b/experiments/run_matched_pilot.py \
+            paper_b/experiments/run_gate0e_local.py \
+            paper_b/experiments/consolidate_gate0e.py \
+            paper_b/experiments/consolidate_gate0b.py \
+            paper_b/experiments/sender_event_instrument.py \
+            paper_b/experiments/check_pilot_output.py \
+            paper_b/test_gate0e_peer_channels.py
+          python -m paper_b.experiments.check_gate0e_design
+          python -m unittest \
+            paper_b.test_gate0a_initial_audit \
+            paper_b.test_gate0b_canonical_pilot \
+            paper_b.test_gate0c_credibility_aware \
+            paper_b.test_gate0d_mechanism \
+            paper_b.test_gate0e_peer_channels -v
+      - name: Local runner dry-run (do not start additional simulations)
+        run: |
+          python -m paper_b.experiments.run_gate0e_local \
+            --phase mechanism --workers 2 --dry-run \
+            --output-dir /tmp/paperb_gate0e_local
+      - name: Execute Gate 0E-0: all 48 N24 T6 matched cells
+        run: |
+          python -m paper_b.experiments.run_gate0e_local \
+            --phase smoke --workers 2 \
+            --output-dir /tmp/paperb_gate0e_smoke
+      - name: Audit all 48 cells and downstream outputs
+        run: |
+          python - <<'PY'
+          import csv, json, gzip
+          from pathlib import Path
+          roots = list(
+              Path("/tmp/paperb_gate0e_smoke/gate0e_smoke").glob("pilot_*")
+          )
+          assert len(roots)==1,roots
+          root=roots[0]
+          manifest=json.loads((root/"pilot_manifest.json").read_text())
+          gate=json.loads((root/"pilot_gate.json").read_text())
+          summary=json.loads((root/"pilot_summary.json").read_text())
+          assert gate["pass"],gate
+          assert gate["observed_runs"]==48,gate
+          assert manifest["n_citizens"]==24
+          assert manifest["horizon_T"]==6
+          assert manifest["sender_event_period_limit"]==6
+          assert summary["n_sender_events"]==6912,summary
+          assert summary["matched_t0_audits_equal"] is True,summary
+          assert summary["extended_edge_maps_equal"] is True,summary
+          assert summary["n_gate0e_channel_contrasts"]==8,summary
+          with (root/"gate0e_channel_contrasts.csv").open() as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==8, len(rows)
+          for r in rows:
+              assert abs(
+                  float(r["slot_attention_contrast"])
+                  +float(r["static_peer_signal_contrast"])
+                  +float(r["endogenous_peer_update_contrast"])
+                  -float(r["total_peer_contrast"])
+              ) < 1e-9,r
+          with (root/"gate0e_peer_event_period_summary.csv").open() as f:
+              events=list(csv.DictReader(f))
+          t0=[r for r in events if int(r["period"])==0]
+          assert len(t0)==48
+          assert all(abs(float(r["audit_share"])-1.0)<1e-12 for r in t0)
+          mute_post=[
+              r for r in events
+              if r["network_environment"]=="extended_muted"
+              and int(r["period"])>=1
+          ]
+          assert mute_post
+          assert all(int(r["peer_delivered"])==0 for r in mute_post)
+          assert sum(int(r["peer_requests"]) for r in mute_post)>0
+          print("Gate 0E-0 source-preserving peer channel smoke: PASS")
+          PY
+      - name: Upload reproducible 48-run smoke data
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperb-gate0e-48run-channel-smoke
+          path: |
+            /tmp/paperb_gate0e_smoke/gate0e_smoke/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0e_smoke/gate0e_smoke/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0e_smoke/gate0e_smoke/pilot_*/pilot_gate.json
+            /tmp/paperb_gate0e_smoke/gate0e_smoke/pilot_*/pilot_summary.json
+          retention-days: 30
+          if-no-files-found: error
