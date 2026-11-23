@@ -74,3 +74,61 @@ jobs:
           assert all(r["baseline_regime"] == "null" for r in rows)
           print("Gate 0B mini sender-grid smoke: PASS")
           PY
+
+      - name: Canonical N100 first-audit diagnostic pilot
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --sender-regimes null,fixed_biased,adaptive \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --frozen-ranking-mode first_audit \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0b_primary
+      - name: Canonical N100 pre-disruption frozen sensitivity
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --sender-regimes null,fixed_biased,adaptive \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --frozen-ranking-mode pre_disruption \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0b_sensitivity
+      - name: Check separation of scientific designs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          a = list(Path("/tmp/paperb_gate0b_primary").glob("pilot_*/pilot_manifest.json"))
+          b = list(Path("/tmp/paperb_gate0b_sensitivity").glob("pilot_*/pilot_manifest.json"))
+          assert len(a) == len(b) == 1, (a, b)
+          m1 = json.loads(a[0].read_text())
+          m2 = json.loads(b[0].read_text())
+          assert m1["design_id"] != m2["design_id"]
+          assert m1["frozen_ranking_mode"] == "first_audit"
+          assert m2["frozen_ranking_mode"] == "pre_disruption"
+          for path in [a[0].parent, b[0].parent]:
+              gate = json.loads((path / "pilot_gate.json").read_text())
+              assert gate["pass"] and gate["observed_runs"] == 24, gate
+          print("Both canonical N100 Gate 0B designs: PASS")
+          PY
+      - name: Upload canonical diagnostic outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperb-gate0b-n100-t26-corrected-audit
+          path: |
+            /tmp/paperb_gate0b_primary/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0b_sensitivity/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0b_primary/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0b_primary/pilot_*/pilot_gate.json
+            /tmp/paperb_gate0b_sensitivity/pilot_*/pilot_manifest.json
+            /tmp/paperb_gate0b_sensitivity/pilot_*/pilot_gate.json
+          if-no-files-found: error
+          retention-days: 30
