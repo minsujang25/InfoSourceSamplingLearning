@@ -859,7 +859,8 @@ def run_condition(
         ],
         "jammer_strategy": jammer_rows,
         "sender_events": [
-            {**common, **row} for row in event_rows
+            {**common, "condition": run_row["condition"], **row}
+            for row in event_rows
         ],
         "edges": edge_rows,
     }
