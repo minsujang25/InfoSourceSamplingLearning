@@ -218,6 +218,7 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
     reliance = [x for p in shards for x in p.get("lambda_checkpoints", [])]
     strategies = [x for p in shards for x in p.get("jammer_strategy", [])]
     edges = [x for p in shards for x in p.get("reliance_edges", [])]
+    sender_events = [x for p in shards for x in p.get("sender_events", [])]
 
     # Enforce matched initial-state identity across network environments.
     initial = defaultdict(set)
@@ -240,6 +241,19 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
     aware_peer = credibility_aware_peer_interaction(aware)
     time_damage = sender_damage(trajectories, by_period=True)
     time_peer = peer_damage_differences(time_damage)
+    if (
+        manifest.get("sender_regimes")
+        and all(x in manifest["sender_regimes"]
+                for x in ("timing_only", "exposure_uniform",
+                          "exposure_ranked", "credibility_aware", "adaptive"))
+    ):
+        from paper_b.experiments.consolidate_gate0d import (
+            staged_contrasts, summarize_sender_events,
+        )
+        staged = staged_contrasts(damage)
+        event_periods = summarize_sender_events(sender_events)
+    else:
+        staged, event_periods = [], []
 
     _write_csv(root / "runs.csv", runs)
     _write_csv(root / "belief_checkpoints.csv", trajectories)
@@ -258,6 +272,12 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
         _write_csv(root / "gate0c_aware_minus_myopic.csv", aware)
     if aware_peer:
         _write_csv(root / "gate0c_aware_by_peer_interaction.csv", aware_peer)
+    if staged:
+        _write_csv(root / "gate0d_staged_damage_contrasts.csv", staged)
+    if sender_events:
+        _write_gzip_csv(root / "gate0d_sender_events.csv.gz", sender_events)
+    if event_periods:
+        _write_csv(root / "gate0d_event_period_summary.csv", event_periods)
 
     blocks = [{
         "seed": int(p["seed"]),
@@ -297,6 +317,9 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
         "n_receiver_differences": len(receiver),
         "n_aware_vs_myopic": len(aware),
         "n_aware_by_peer_interaction": len(aware_peer),
+        "n_gate0d_staged_damage_contrasts": len(staged),
+        "n_gate0d_sender_events": len(sender_events),
+        "n_gate0d_event_period_summaries": len(event_periods),
         "cross_network_initial_state_matched": True,
         "sender_damage_by_condition": [
             {
