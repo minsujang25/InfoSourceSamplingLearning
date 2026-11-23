@@ -308,6 +308,7 @@ def code_fingerprint() -> str:
         repo_root / "paper_b" / "adversary_objectives.py",
         repo_root / "paper_b" / "experiments" / "sender_event_instrument.py",
         repo_root / "paper_b" / "experiments" / "consolidate_gate0b.py",
+        repo_root / "paper_b" / "experiments" / "consolidate_gate0e.py",
         repo_root / "paper_b" / "experiments" / "check_pilot_output.py",
         repo_root / "environment.yml",
     )
