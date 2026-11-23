@@ -41,6 +41,33 @@ def attach_sender_event_capture(model, *, limit: int = 26) -> list[dict]:
                 raise AssertionError("Delivered messages exceed allocation")
             pre_ranking = list(_citizen._behavioral_ranking())
             rank = pre_ranking.index(source) + 1
+            peer_sources = [
+                (i, s) for i, s in enumerate(ordered_sources)
+                if s.type_of_agent == "citizen"
+            ]
+            expert_sources = [
+                (i, s) for i, s in enumerate(ordered_sources)
+                if s.type_of_agent == "infoprovider"
+            ]
+            peer_requests = sum(
+                int(_citizen.num_request[i]) for i, _ in peer_sources
+            )
+            peer_delivered = sum(
+                len(_citizen.sampled_msgs[i]) for i, _ in peer_sources
+            )
+            expert_requests = sum(
+                int(_citizen.num_request[i]) for i, _ in expert_sources
+            )
+            expert_delivered = sum(
+                len(_citizen.sampled_msgs[i]) for i, _ in expert_sources
+            )
+            # Each field is passive: no RNG draws and no posterior writes.
+            # This compact t0 signature verifies matched initial peer audits.
+            peer_audit_signature = "|".join(
+                f"{int(s.pos)}:{len(_citizen.sampled_msgs[i])}:"
+                f"{sum(_citizen.sampled_msgs[i]):.17g}"
+                for i, s in peer_sources
+            )
             row = {
                 "period": int(model.period),
                 "citizen_pos": int(_citizen.pos),
@@ -49,6 +76,21 @@ def attach_sender_event_capture(model, *, limit: int = 26) -> list[dict]:
                     "audit" if _citizen.theta_or_delta == 1 else "theta"
                 ),
                 "source_count": len(_citizen.info_source),
+                "peer_signal_mode": str(model.peer_signal_mode),
+                "peer_request_count": int(peer_requests),
+                "peer_delivered_count": int(peer_delivered),
+                "expert_request_count": int(expert_requests),
+                "expert_delivered_count": int(expert_delivered),
+                "peer_audit_signature": peer_audit_signature,
+                "peer_outgoing_sds": "|".join(
+                    f"{int(s.pos)}:"
+                    f"{float(_citizen._delivered_peer_signal_sds[s]):.17g}"
+                    for i, s in peer_sources
+                ),
+                "peer_initial_means": "|".join(
+                    f"{int(s.pos)}:{float(s._initial_peer_signal_mu):.17g}"
+                    for i, s in peer_sources
+                ),
                 "jammer_rank_pre": int(rank),
                 "jammer_substantive_prob_pre": float(
                     _citizen.substantive_reliance_probabilities[source]
@@ -101,6 +143,11 @@ def complete_sender_events(model, rows: list[dict], *, limit: int = 26) -> None:
         row["jammer_precision_increment"] = (
             row["jammer_precision_post"] - row["jammer_precision_pre"]
         )
+        row["peer_precision_post"] = float(sum(
+            citizen.cumulative_evidence_precision[s]
+            for s in citizen.info_source
+            if s.type_of_agent == "citizen"
+        ))
         count += 1
     if count != len(model.citizens):
         raise AssertionError(
