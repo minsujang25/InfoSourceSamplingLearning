@@ -127,6 +127,53 @@ jobs:
           assert all_manifests[0]["design_id"] != all_manifests[1]["design_id"]
           print("Gate 0C N100 T26 paired primary+sensitivity diagnostics: PASS")
           PY
+      - name: N100 T26 penalty-zero component diagnostic
+        run: |
+          python -m paper_b.experiments.run_matched_pilot \
+            --seeds 6901,6902 --initial-regimes flat \
+            --network-environments elite_only,extended \
+            --n-citizens 100 --horizon 26 \
+            --k 1 --epsilon 0.05 --credit 20 \
+            --surveillance-interval 5 \
+            --sender-regimes null,fixed_biased,adaptive,credibility_aware \
+            --peer-evidence-mode source_posterior --tau-social 1 \
+            --jammer-credibility-penalty 0 \
+            --frozen-ranking-mode first_audit \
+            --initial-audit-mode centroid \
+            --workers 1 --no-edge-log \
+            --output-dir /tmp/paperb_gate0c_lambda0
+      - name: Confirm lambda-zero design and report contrasts
+        run: |
+          python - <<'PY'
+          import json, gzip, csv, statistics
+          from pathlib import Path
+          p = list(Path("/tmp/paperb_gate0c_lambda0").glob("pilot_*"))
+          assert len(p) == 1, p
+          root = p[0]
+          manifest = json.loads((root/"pilot_manifest.json").read_text())
+          gate = json.loads((root/"pilot_gate.json").read_text())
+          assert manifest["jammer_credibility_penalty"] == 0
+          assert gate["pass"] and gate["observed_runs"] == 32
+          with gzip.open(root/"jammer_strategy_trajectory.csv.gz", "rt") as f:
+              strategies = list(csv.DictReader(f))
+          for sender in ("adaptive", "credibility_aware"):
+              first = [float(r["message_mean"]) for r in strategies
+                       if r["jammer_regime"] == sender
+                       and int(r["period"]) == 1]
+              print("lambda0", sender, "t1 mean", statistics.mean(first))
+          with (root/"gate0b_sender_damage.csv").open() as f:
+              damage = list(csv.DictReader(f))
+          for env in ("elite_only", "extended"):
+              for recv in ("adaptive", "frozen"):
+                  values = [float(r["delta_mse"]) for r in damage
+                            if r["network_environment"] == env
+                            and r["reliance_mode"] == recv
+                            and r["sender_regime"] == "credibility_aware"]
+                  print("lambda0 excess damage", env, recv,
+                        statistics.mean(values))
+          print("Gate 0C lambda0 component diagnostic: PASS")
+          PY
+
       - name: Upload Gate 0C diagnostic outputs
         uses: actions/upload-artifact@v4
         with:
@@ -134,6 +181,7 @@ jobs:
           path: |
             /tmp/paperb_gate0c_primary/paper_b_pilot_*_shareable.zip
             /tmp/paperb_gate0c_sensitivity/paper_b_pilot_*_shareable.zip
+            /tmp/paperb_gate0c_lambda0/paper_b_pilot_*_shareable.zip
             /tmp/paperb_gate0c_primary/pilot_*/pilot_manifest.json
             /tmp/paperb_gate0c_sensitivity/pilot_*/pilot_manifest.json
             /tmp/paperb_gate0c_primary/pilot_*/pilot_gate.json
