@@ -336,6 +336,12 @@ def consolidate_gate0b(run_root: str | Path) -> dict:
             "isolated causal peer-transmission mediation."
         ),
     }
+    from paper_b.experiments.consolidate_gate0e import augment_gate0e
+    summary.update(
+        augment_gate0e(
+            root, manifest, shards, damage, sender_events
+        )
+    )
     (root / "pilot_summary.json").write_text(
         json.dumps(summary, sort_keys=True, indent=2)
     )
