@@ -115,6 +115,21 @@ def validate_pilot(
                     block_errors.append(
                         f"{block_id}/{row.get('condition')}: tau_social mismatch"
                     )
+                if "jammer_credibility_penalty" in manifest:
+                    penalty = float(
+                        row.get("jammer_credibility_penalty", math.nan)
+                    )
+                    if not math.isclose(
+                        penalty,
+                        float(manifest["jammer_credibility_penalty"]),
+                        rel_tol=0.0,
+                        abs_tol=tolerance,
+                    ):
+                        config_ok = False
+                        block_errors.append(
+                            f"{block_id}/{row.get('condition')}: "
+                            "jammer_credibility_penalty mismatch"
+                        )
                 expected_name = (
                     f"{row['reliance_mode']}__{row['jammer_regime']}"
                 )
