@@ -50,7 +50,7 @@ jobs:
           python -m paper_b.experiments.run_gate0e_local \
             --phase mechanism --workers 2 --dry-run \
             --output-dir /tmp/paperb_gate0e_local
-      - name: Execute Gate 0E-0: all 48 N24 T6 matched cells
+      - name: "Execute Gate 0E-0: all 48 N24 T6 matched cells"
         run: |
           python -m paper_b.experiments.run_gate0e_local \
             --phase smoke --workers 2 \
