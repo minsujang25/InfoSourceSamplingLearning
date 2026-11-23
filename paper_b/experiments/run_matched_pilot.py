@@ -70,7 +70,9 @@ CONDITION_ORDER = (
     ("frozen", True),
     ("frozen", False),
 )
-SENDER_REGIMES = ("null", "fixed_biased", "adaptive", "truth_clone")
+SENDER_REGIMES = (
+    "null", "fixed_biased", "adaptive", "credibility_aware", "truth_clone"
+)
 
 
 def parse_sender_regimes(raw: str | None) -> tuple[str, ...] | None:
@@ -94,7 +96,7 @@ def condition_specs(sender_regimes: tuple[str, ...] | None):
             for reliance, jammer_active in CONDITION_ORDER
         ]
     return [
-        (reliance, sender, sender == "adaptive")
+        (reliance, sender, sender in {"adaptive", "credibility_aware"})
         for reliance in ("adaptive", "frozen")
         for sender in sender_regimes
     ]
@@ -154,7 +156,7 @@ def parse_args() -> argparse.Namespace:
         "--sender-regimes",
         default="",
         help=(
-            "Comma-separated subset of null,fixed_biased,adaptive,truth_clone. "
+            "Comma-separated subset of null,fixed_biased,adaptive,credibility_aware,truth_clone. "
             "Omit to reproduce the historical adaptive/J1 vs truth_clone/J0 quartet. "
             "For Gate 0B set: null,fixed_biased,adaptive."
         ),
@@ -165,6 +167,13 @@ def parse_args() -> argparse.Namespace:
         default="legacy_batch",
     )
     parser.add_argument("--tau-social", type=float, default=0.0)
+    parser.add_argument(
+        "--jammer-credibility-penalty", type=float, default=1.0,
+        help=(
+            "Fixed lambda in the credibility-aware one-step objective. "
+            "Gate 0C primary lambda=1; myopic sender ignores it."
+        ),
+    )
     parser.add_argument(
         "--frozen-ranking-mode",
         choices=("first_audit", "pre_disruption"),
@@ -272,6 +281,7 @@ def code_fingerprint() -> str:
         repo_root / "paper_b" / "metrics.py",
         repo_root / "paper_b" / "experiments" / "run_local_diagnostic.py",
         repo_root / "paper_b" / "experiments" / "run_matched_pilot.py",
+        repo_root / "paper_b" / "adversary_objectives.py",
         repo_root / "paper_b" / "experiments" / "consolidate_gate0b.py",
         repo_root / "paper_b" / "experiments" / "check_pilot_output.py",
         repo_root / "environment.yml",
@@ -379,6 +389,7 @@ def run_condition(
     jammer_regime: str | None = None,
     peer_evidence_mode: str = "legacy_batch",
     tau_social: float | None = None,
+    jammer_credibility_penalty: float | None = None,
     frozen_ranking_mode: str = "first_audit",
     initial_audit_mode: str = "centroid",
     gateway_positions: set[int] | None = None,
@@ -406,6 +417,10 @@ def run_condition(
     # Preserve caller-supplied canonical tau_social unless explicitly overridden.
     if tau_social is not None:
         config["tau_social"] = float(tau_social)
+    if jammer_credibility_penalty is not None:
+        config["jammer_credibility_penalty"] = float(
+            jammer_credibility_penalty
+        )
 
     model = InfoSampleModel(model_attribute=config, rng=seed)
     structure_fp = structural_fingerprint(model)
@@ -714,6 +729,7 @@ def run_condition(
         "initial_audit_mode": str(model.initial_audit_mode),
         "peer_evidence_mode": str(model.peer_evidence_mode),
         "tau_social": float(model.tau_social),
+        "jammer_credibility_penalty": float(model.jammer_credibility_penalty),
         "frozen_ranking_mode": str(model.frozen_ranking_mode),
         "K": int(k),
         "initial_state_fingerprint": initial_fp,
@@ -890,6 +906,7 @@ def run_block(task: dict) -> dict:
                 jammer_regime=sender,
                 peer_evidence_mode=str(task["peer_evidence_mode"]),
                 tau_social=float(task["tau_social"]),
+                jammer_credibility_penalty=float(task["jammer_credibility_penalty"]),
                 frozen_ranking_mode=str(task["frozen_ranking_mode"]),
                 initial_audit_mode=str(task["initial_audit_mode"]),
                 k=int(task["k"]),
@@ -984,6 +1001,7 @@ def build_design(
         "surveillance_interval": int(args.surveillance_interval),
         "peer_evidence_mode": str(args.peer_evidence_mode),
         "tau_social": float(args.tau_social),
+        "jammer_credibility_penalty": float(args.jammer_credibility_penalty),
         "frozen_ranking_mode": str(args.frozen_ranking_mode),
         "initial_audit_mode": str(args.initial_audit_mode),
         "save_edge_log": bool(args.save_edge_log),
@@ -1006,6 +1024,13 @@ def main() -> None:
         raise ValueError("--workers must be positive.")
     if not math.isfinite(args.tau_social) or args.tau_social < 0:
         raise ValueError("--tau-social must be finite and nonnegative.")
+    if (
+        not math.isfinite(args.jammer_credibility_penalty)
+        or args.jammer_credibility_penalty < 0
+    ):
+        raise ValueError(
+            "--jammer-credibility-penalty must be finite and nonnegative."
+        )
     sender_regimes = parse_sender_regimes(args.sender_regimes)
     if sender_regimes is not None and "null" not in sender_regimes:
         raise ValueError("Sender-grid mode requires a null baseline.")
@@ -1079,6 +1104,7 @@ def main() -> None:
                 "sender_regimes": sender_regimes,
                 "peer_evidence_mode": args.peer_evidence_mode,
                 "tau_social": args.tau_social,
+                "jammer_credibility_penalty": args.jammer_credibility_penalty,
                 "frozen_ranking_mode": args.frozen_ranking_mode,
                 "initial_audit_mode": args.initial_audit_mode,
                 "save_edge_log": args.save_edge_log,
@@ -1093,6 +1119,7 @@ def main() -> None:
     print(f"  individual runs  : {design['expected_runs']}")
     print(f"  sender regimes   : {sender_regimes or 'legacy quartet'}")
     print(f"  evidence / tau   : {args.peer_evidence_mode} / {args.tau_social}")
+    print(f"  audit penalty    : {args.jammer_credibility_penalty}")
     print(f"  frozen ranking   : {args.frozen_ranking_mode}")
     print(f"  initial audit    : {args.initial_audit_mode}")
     print(f"  pending blocks   : {len(pending)}")
