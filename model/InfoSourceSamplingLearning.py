@@ -24,7 +24,9 @@ Scientific changes relative to the legacy implementation
    updates return sqrt(posterior variance); no arbitrary clipping is used.
 6. Delta/source-displacement uncertainty is updated dimensionally as a
    standard deviation.
-7. Periodic Jammer re-surveillance observes current pre-update citizen beliefs,
+7. Period 0 uses nondisruptive centroid audit messages; strategic Jammer
+   re-surveillance starts in period 1 and observes current pre-update beliefs.
+   An explicit legacy flag reproduces historical period-0 behavior.
    not initial beliefs.
 8. Reliance probabilities and realized request shares are logged separately.
 
@@ -173,6 +175,7 @@ class InfoSampleModel(Model):
         peer_evidence_mode: str = "legacy_batch",
         tau_social: float = 0.0,
         frozen_ranking_mode: str = "first_audit",
+        initial_audit_mode: str = "centroid",
         surveillance_interval: int = 5,
         convergence_tolerance: float = 1e-3,
         stop_on_convergence: bool = False,
@@ -277,6 +280,14 @@ class InfoSampleModel(Model):
             raise ValueError(
                 "frozen_ranking_mode must be 'first_audit' or "
                 "'pre_disruption'."
+            )
+
+        self.initial_audit_mode = str(
+            take("initial_audit_mode", initial_audit_mode)
+        ).lower()
+        if self.initial_audit_mode not in {"centroid", "legacy"}:
+            raise ValueError(
+                "initial_audit_mode must be 'centroid' or 'legacy'."
             )
 
         self.surveillance_interval = max(
@@ -1091,24 +1102,60 @@ class DisruptiveJammer(InfoAgents):
     def prepare_for_period(self) -> list[dict]:
         """Prepare and log the period-t Jammer strategy.
 
-        Surveillance occurs at initialization and every surveillance_interval
-        periods. At a refresh the Jammer observes the current pre-update belief
-        distribution and chooses one message mean per segment. Those message
-        means remain fixed until the next surveillance refresh.
+        Under initial_audit_mode='centroid', all sender regimes provide
+        non-disruptive period-0 audit messages drawn from N(cluster centroid, 1).
+        This recreates the historical initial-message rule while preserving
+        the current synchronous credibility-audit and evidence-update logic.
 
-        This replaces the legacy within-window recurrence that retuned message
-        means every period and did not use the Jammer's underlying position in
-        the documented deviation-cost objective.
+        Strategic optimization starts in period 1 and refreshes every
+        surveillance_interval substantive periods (1, 1+interval, ...).
+        initial_audit_mode='legacy' retains the uncorrected period-0 behavior
+        for exact reproduction of archived production results.
         """
+        if self.model.period == 0 and self.model.initial_audit_mode == "centroid":
+            # All sender regimes undergo the same non-disruptive initialization.
+            # No strategic objective is evaluated at period 0.
+            self.surveil_citizen()
+            self._current_msg_param = {}
+            self._strategy_state = {}
+            records = []
+            for cluster, citizens in sorted(self.citizen_per_cl.items()):
+                centroid = float(self.citizen_intel["centroids"][cluster])
+                self._current_msg_param[int(cluster)] = {
+                    "avg": centroid,
+                    "std": 1.0,
+                }
+                records.append(
+                    {
+                        "period": 0,
+                        "cluster": int(cluster),
+                        "refresh": True,
+                        "strategy_phase": "initial_audit",
+                        "sender_regime": str(self.model.jammer_regime),
+                        "segment_mean": centroid,
+                        "message_mean": centroid,
+                        "message_sd": 1.0,
+                        "cluster_size": int(len(citizens)),
+                    }
+                )
+            return records
+
         if self.model.jammer_regime != "adaptive":
             self._current_msg_param = {}
             self._strategy_state = {}
             return []
 
-        refresh = (
-            not self.citizen_intel
-            or self.model.period % self.model.surveillance_interval == 0
-        )
+        if self.model.initial_audit_mode == "centroid":
+            # The first strategic refresh follows the non-disruptive audit.
+            refresh = (
+                not self._strategy_state
+                or (self.model.period - 1) % self.model.surveillance_interval == 0
+            )
+        else:
+            refresh = (
+                not self.citizen_intel
+                or self.model.period % self.model.surveillance_interval == 0
+            )
         if refresh:
             self.surveil_citizen()
             self._optimize_from_current_surveillance()
@@ -1121,6 +1168,8 @@ class DisruptiveJammer(InfoAgents):
                     "period": int(self.model.period),
                     "cluster": int(cluster),
                     "refresh": bool(refresh),
+                    "strategy_phase": "adaptive_disruption",
+                    "sender_regime": str(self.model.jammer_regime),
                     **state,
                 }
             )
@@ -1131,6 +1180,23 @@ class DisruptiveJammer(InfoAgents):
             return []
 
         regime = self.model.jammer_regime
+        if self.model.period == 0 and self.model.initial_audit_mode == "centroid":
+            # Initialization is a credibility audit, never an attack.
+            # Source-specific messages are centered on the requester's own
+            # initial audience cluster, matching the original model design.
+            if not self.citizen_intel:
+                raise RuntimeError(
+                    "Initial audit messages require prepared centroid clusters."
+                )
+            cluster = self.citizen_intel["membership"].get(requester.unique_id)
+            if cluster is None:
+                raise RuntimeError(
+                    "Initial audit requester has no cluster assignment."
+                )
+            centroid = float(self.citizen_intel["centroids"][cluster])
+            return list(
+                self.model.rng.normal(centroid, 1.0, int(n_req))
+            )
         if regime == "truth_clone":
             return list(
                 self.model.rng.normal(
