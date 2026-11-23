@@ -70,6 +70,12 @@ CONDITION_ORDER = (
     ("frozen", True),
     ("frozen", False),
 )
+GATE0E_CHANNELS = {
+    "elite_only": ("elite_only", "live"),
+    "extended_muted": ("extended", "muted"),
+    "extended_stale": ("extended", "stale"),
+    "extended_live": ("extended", "live"),
+}
 SENDER_REGIMES = (
     "null", "fixed_biased", "adaptive", "timing_only",
     "exposure_uniform", "exposure_ranked", "credibility_aware",
@@ -264,14 +270,15 @@ def parse_network_environments(value: str) -> list[str]:
         for part in value.split(",")
         if part.strip()
     ]
+    valid = set(NETWORK_ENVIRONMENTS) | set(GATE0E_CHANNELS)
     invalid = [
         env for env in environments
-        if env not in NETWORK_ENVIRONMENTS
+        if env not in valid
     ]
     if invalid:
         raise ValueError(
             "Unknown network environment(s): "
-            f"{invalid}. Valid values: {list(NETWORK_ENVIRONMENTS)}"
+            f"{invalid}. Valid values: {sorted(valid)}"
         )
     if not environments:
         raise ValueError("At least one network environment is required.")
@@ -418,9 +425,13 @@ def run_condition(
     sender_event_period_limit: int = 0,
 ) -> dict:
     config = dict(base_config)
+    internal_environment, peer_signal_mode = GATE0E_CHANNELS.get(
+        environment, (environment, "live")
+    )
     config.update(
         {
-            "network_environment": environment,
+            "network_environment": internal_environment,
+            "peer_signal_mode": peer_signal_mode,
             "reliance_mode": reliance_mode,
             "jammer_active": bool(jammer_active),
             "surveil_ability": int(k),
@@ -751,6 +762,7 @@ def run_condition(
         "seed": int(seed),
         "initial_regime": regime,
         "network_environment": environment,
+        "peer_signal_mode": str(model.peer_signal_mode),
         "reliance_mode": reliance_mode,
         "jammer_active": bool(jammer_active),
         "jammer_regime": str(model.jammer_regime),
