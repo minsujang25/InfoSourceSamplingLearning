@@ -109,16 +109,6 @@ def validate_channel_blocks(shards: list[dict], events: list[dict],
                 float(row["jammer_delta_mu_post"]),
             )
             t0[key][chan] = signature
-        expected_t0 = len(grouped) * 2 * 3 * int(next(
-            iter(next(iter(grouped.values())).values())
-        )["runs"][0]["n_citizens"]) if False else None
-        # Do not infer 3 senders from hard-coded labels: calculate from
-        # the actual matched run conditions present in each channel shard.
-        required = sum(
-            len(channels["extended_live"]["runs"])
-            for channels in grouped.values()
-        )
-        citizen_rows = len(t0)
         if not t0 or len(t0)*3 != sum(
             1 for row in events
             if int(row["period"])==0
