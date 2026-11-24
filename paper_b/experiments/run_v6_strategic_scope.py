@@ -33,7 +33,6 @@ PHASES={"preflight":((7501,),26,tuple(SETTINGS)),
 REP=("extended_live","extended_live","flat","credibility_aware","adaptive")
 FIELDS=sci.FIELDS
 ORIGINAL_RUN=base.run_condition
-ORIGINAL_SURVEIL=m.DisruptiveJammer.surveil_citizen
 
 
 def require(ok,msg):
@@ -50,19 +49,6 @@ def set_floor():
     m.MIN_VAR=m.MIN_SD**2
 
 
-def common_audit_surveil(self):
-    # K4 only after the mandatory initial audit. Restore instance attribute
-    # even on failure. Do not alter clustering algorithm or model RNG.
-    if self.model.period != 0:
-        return ORIGINAL_SURVEIL(self)
-    k=self.surveillance_ability
-    try:
-        self.surveillance_ability=1
-        return ORIGINAL_SURVEIL(self)
-    finally:
-        self.surveillance_ability=k
-
-
 @contextmanager
 def variant_scope(variant):
     k,interval=SETTINGS[variant]
@@ -70,10 +56,9 @@ def variant_scope(variant):
         kw["k"]=k
         kw["base_config"]=dict(kw["base_config"],surveillance_interval=interval)
         return ORIGINAL_RUN(**kw)
-    with ExitStack() as stack:
-        stack.enter_context(patch.object(base,"run_condition",run))
-        if k!=1:
-            stack.enter_context(patch.object(m.DisruptiveJammer,"surveil_citizen",common_audit_surveil))
+    # Native model uses the same K for initial credibility establishment
+    # and all subsequent surveillance refreshes.
+    with patch.object(base,"run_condition",run):
         yield
 
 
@@ -90,7 +75,7 @@ def validate_strategy(out,horizon,variant):
     k,interval=SETTINGS[variant]
     r=out["run"]; sender=r["sender_regime"]
     require(int(r["K"])==k and r["variant"]==variant
-            and r["initial_audit_K"]==1 and r["strategic_K"]==k
+            and r["initial_audit_K"]==k and r["strategic_K"]==k
             and r["surveillance_interval"]==interval,"Incorrect strategic settings")
     periods=defaultdict(list)
     for row in out["jammer_strategy"]:
@@ -98,11 +83,13 @@ def validate_strategy(out,horizon,variant):
     require(set(periods)==({0} if sender=="null" else set(range(horizon))),
             "Incomplete sender strategy trajectory")
     init=periods[0]
-    require(len(init)==1 and int(init[0]["cluster_size"])==base.N
-            and init[0]["strategy_phase"]=="initial_audit"
-            and init[0]["refresh"] is True
-            and float(init[0]["message_mean"])==float(init[0]["segment_mean"]),
-            "Common K1 audit failed")
+    require(len(init)==k and len({int(x["cluster"]) for x in init})==k
+            and sum(int(x["cluster_size"]) for x in init)==base.N
+            and all(int(x["cluster_size"])>0 and x["strategy_phase"]=="initial_audit"
+                    and x["refresh"] is True and float(x["message_sd"])==1.
+                    and math.isfinite(float(x["segment_mean"]))
+                    and float(x["message_mean"])==float(x["segment_mean"]) for x in init),
+            "Native K centroid audit failed")
     if sender=="null":
         return
     prior=None
@@ -126,11 +113,53 @@ def validate_strategy(out,horizon,variant):
         prior=current
 
 
+def validate_within_k_audit(outputs):
+    """Match audit exposure and credibility within K and environment.
+
+    Null is forced last by design, so its behavioral rank is not required
+    to match active senders. Active myopic/aware and adaptive/frozen share
+    the same initial credibility and behavioral rank.
+    """
+    signatures=audit_t0(outputs)
+    for env in CHANNELS:
+        subset=[o for o in outputs if o["run"]["cell"]==env]
+        require(len(subset)==6,"Incomplete within-K audit block")
+        common=None
+        active=None
+        clusters=None
+        for o in subset:
+            r=o["run"]
+            rows=signatures[r["run_id"]]
+            require(len(rows)==base.N,"Incomplete initial audit events")
+            # audit_t0's final field is jammer_rank_post.
+            raw={pos:values[:-1] for pos,values in rows.items()}
+            if common is None:
+                common=raw
+            else:
+                require(raw==common,"Within-K audit message or credibility mismatch")
+            if r["sender_regime"]!="null":
+                if active is None:
+                    active=rows
+                else:
+                    require(rows==active,"Active sender/receiver initial rank mismatch")
+            else:
+                events=[e for e in o["sender_events"] if int(e["period"])==0]
+                require(all(int(e["jammer_rank_post"])==int(e["source_count"]) for e in events),
+                        "Null slot not ranked last")
+            partition=sorted((int(x["cluster"]),int(x["cluster_size"]),float(x["segment_mean"]))
+                             for x in o["jammer_strategy"] if int(x["period"])==0)
+            if clusters is None:
+                clusters=partition
+            else:
+                require(partition==clusters,"Within-K centroid partition mismatch")
+
+
 def validate(outputs,seed,horizon,variant,did):
     expected={(c[0],c[3],c[4]) for c in cells()}
     actual={(o["run"]["cell"],o["run"]["sender_regime"],o["run"]["reliance_mode"]) for o in outputs}
     require(len(outputs)==12 and expected==actual,"Incomplete strategic grid")
     base.check_block(outputs,"strategic_generic")
+    validate_within_k_audit(outputs)
     for o in outputs:
         r=o["run"]
         require(r["seed"]==seed and r["design_id"]==did and r["suite"]=="C","Wrong run identity")
@@ -163,7 +192,7 @@ def worker(seed,variant,horizon,did,root):
             require(base.parity_payload(chosen[key])==base.parity_payload(plain[key]),"Logger parity failed: "+key)
     k,interval=SETTINGS[variant]
     for o in outputs:
-        meta=dict(variant=variant,initial_audit_K=1,strategic_K=k,surveillance_interval=interval)
+        meta=dict(variant=variant,initial_audit_K=k,strategic_K=k,surveillance_interval=interval)
         o["run"].update(meta)
         for key in (*base.KEYS,"group_terminal","group_acquisition","group_belief_checkpoints","group_request_checkpoints"):
             for row in o[key]:
@@ -192,7 +221,8 @@ def compare_block(outputs,a,horizon):
         old=a["runs"][(int(r["seed"]),r["network_environment"],"null",r["reliance_mode"])]
         for k in ("initial_state_fingerprint","structural_fingerprint"):
             require(r[k]==old[k],"Archive structure mismatch")
-        if horizon==400:
+        # K4 changes the initial audit even for the null sender.
+        if horizon==400 and int(r["initial_audit_K"])==1:
             archive_api.compare_archive(o,a)
 
 
@@ -241,7 +271,7 @@ def records(out,key):
 
 def consolidate(root,d,a):
     seeds=d["seeds"];h=d["horizon"];did=d["design_id"]
-    columns=defaultdict(set);counts=defaultdict(int);all_rows=[]
+    columns=defaultdict(set);counts=defaultdict(int);all_rows=[]; audit_rows=[]
     for seed in seeds:
         old=None
         if h==400:
@@ -252,11 +282,23 @@ def consolidate(root,d,a):
         for variant in d["variants"]:
             outputs=read_shard(root,seed,variant,h,did)
             compare_block(outputs,a,h)
-            now=audit_t0(outputs)
-            if sig is None:
-                sig=now
-            else:
-                require(now==sig,"Initial audit changed across strategic variants")
+            if SETTINGS[variant][0]==1:
+                now=audit_t0(outputs)
+                if sig is None:
+                    sig=now
+                else:
+                    require(now==sig,"K1 audit changed with surveillance interval")
+            # Initial credibility and rank are outcomes of K. Refresh1
+            # supplies a K1 comparator in every full-run seed.
+            for o in outputs:
+                r=o["run"]
+                events=[e for e in o["sender_events"] if int(e["period"])==0]
+                audit_rows.append(dict(seed=seed,variant=variant,network_environment=r["network_environment"],
+                     sender_regime=r["sender_regime"],reliance_mode=r["reliance_mode"],
+                     initial_audit_K=r["initial_audit_K"],n_citizens=len(events),
+                     mean_abs_jammer_delta=sum(abs(float(e["jammer_delta_mu_post"])) for e in events)/len(events),
+                     mean_jammer_rank=sum(int(e["jammer_rank_post"]) for e in events)/len(events),
+                     top_jammer_share=sum(int(e["jammer_rank_post"])==1 for e in events)/len(events)))
             paths={archive_api.key(o["run"]):{int(r["horizon_step"]):float(r["mse_truth"])
                    for r in o["belief_checkpoints"]} for o in outputs}
             rows=contrasts(seed,variant,paths);all_rows.extend(rows)
@@ -280,6 +322,7 @@ def consolidate(root,d,a):
                 for o in read_shard(root,seed,variant,h,did):
                     for key,w in writers.items():
                         w.writerows(records(o,key))
+    base.csv_gz(root/"initial_audit_seed_metrics.csv.gz",audit_rows)
     base.csv_gz(root/"strategic_seed_contrasts.csv.gz",all_rows)
     base.csv_gz(root/"strategic_contrast_summary.csv.gz",summary)
     return dict(counts),len(all_rows)
@@ -290,7 +333,7 @@ def design_for(phase):
     d=dict(phase=phase,seeds=list(seeds),horizon=horizon,variants=list(variants),
            N=100,credit=20,epsilon=.05,tau_social=1.,initial_audit="centroid",
            frozen_ranking="first_audit",peer_evidence="source_posterior",cells=cells(),
-           settings={v:{"initial_audit_K":1,"strategic_K":SETTINGS[v][0],
+           settings={v:{"initial_audit_K":SETTINGS[v][0],"strategic_K":SETTINGS[v][0],
                         "surveillance_interval":SETTINGS[v][1]} for v in variants},
            grid_runs=len(seeds)*len(variants)*12,parity_runs=len(seeds)*len(variants),
            archive_replay_runs=6 if phase=="preflight" else 0,
@@ -328,7 +371,8 @@ def main():
         g=json.loads(gpath.read_text())
         require(g.get("pass") is True and g.get("design_id")==pre["design_id"]
                 and g.get("grid_runs")==36 and g.get("parity_runs")==3
-                and g.get("archive_replay_pass") is True and g.get("matched_t0_audit") is True,
+                and g.get("archive_replay_pass") is True and g.get("matched_t0_within_k") is True
+                and g.get("matched_t0_k1_preflight") is True,
                 "Matching strategic preflight not passed")
     require(not root.exists() or args.resume,"Output exists: use --resume with identical design")
     root.mkdir(parents=True,exist_ok=True);(root/"shards").mkdir(exist_ok=True)
@@ -356,8 +400,10 @@ def main():
     replay=baseline_replay(a,did) if args.phase=="preflight" else []
     gate={"pass":True,"status":args.phase+"_only","design_id":did,
           "grid_runs":d["grid_runs"],"parity_runs":d["parity_runs"],
-          "matched_t0_audit":True,"archive_replay_pass":True if replay else None,
-          "archive_replay":replay,"archive_null_matches":len(d["seeds"])*len(d["variants"])*4 if h==400 else 0,
+          "matched_t0_within_k":True,"matched_t0_k1_preflight":True if h==26 else None,
+          "archive_replay_pass":True if replay else None,"archive_replay":replay,
+          "archive_null_matches":len(d["seeds"])*sum(SETTINGS[v][0]==1 for v in d["variants"])*4 if h==400 else 0,
+          "new_k4_null_runs":len(d["seeds"])*sum(SETTINGS[v][0]==4 for v in d["variants"])*4,
           "row_counts":counts,"seed_contrast_rows":n,"production_authorized":False}
     gp.write_text(json.dumps(gate,indent=2),encoding="utf-8")
     bundle=root/f"paper_b_v6_strategic_{args.phase}_{did}_shareable.zip"
