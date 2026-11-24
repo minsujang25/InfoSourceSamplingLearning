@@ -26,9 +26,9 @@
 Source: the actual user-uploaded `paper_b_pilot_b7a571b4818a_shareable.zip`, especially `pilot_gate.json`, `runs.csv`, `gate0e_channel_contrasts.csv`, and `belief_checkpoints.csv`. The uploaded package's validation PASS is 2,400/2,400 runs, 400/400 complete matched blocks, 0 reported errors. Actual event log limit was zero, so the new batch does **not** independently test t0 audit identity at individual-event level (`matched_t0_audits_equal=null`). Gate 0E-1 completed that diagnostic with the **same scientific fingerprint**.
 
 At T400, mean L−E null-relative damage by sender/reliance:
-- Myopic/adaptive +7.0697 (bootstrap percentile interval [5.753, 8.586]); L−S +4.6868.
-- Myopic/frozen +5.7168 ([5.001, 6.461]); L−S +6.6718.
-- Credibility-aware/adaptive +0.5953 ([0.399, 0.796]); L−S +0.4238.
+- Myopic/adaptive +7.0697 (bootstrap percentile interval [5.712, 8.572]); L−S +4.6868.
+- Myopic/frozen +5.7168 ([5.009, 6.458]); L−S +6.6718.
+- Credibility-aware/adaptive +0.5953 ([0.397, 0.791]); L−S +0.4238.
 - Credibility-aware/frozen −0.9565 ([−1.173, −0.740]); L−S +0.0727, interval [−0.045, 0.190].
 
 These intervals are **seed-block Monte Carlo uncertainty**, not statistical inference about real-world populations. All four E/M/S/L contrasts are reported in the working Supplement. Myopic/adaptive M−E is +101.570, because M intentionally wastes peer request budget: it is NOT a natural disconnected-network counterfactual. Stale null MSE is nontrivial; interpretation MUST include total sender MSE and null MSE, not D alone.
