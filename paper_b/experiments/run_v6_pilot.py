@@ -262,7 +262,7 @@ def check_block(outputs, suite):
 
 def worker(seed, suite, horizon, design_id, root):
     model_module.MIN_SD = 1e-8
-    model_module.MIN_VAR = 1e-16
+    model_module.MIN_VAR = model_module.MIN_SD ** 2
     outputs = []
     grid = cells(suite)
     for cell in grid:
