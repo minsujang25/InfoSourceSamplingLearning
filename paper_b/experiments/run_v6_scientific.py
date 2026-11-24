@@ -248,7 +248,7 @@ def main():
         require(json.loads(manifest.read_text())==json.loads(json.dumps(design)),"Manifest mismatch")
     manifest.write_text(json.dumps(design,indent=2),encoding="utf-8")
     gate_path=root/"v6_gate.json"
-    gate_path.write_text(json.dumps(dict(pass_=False,status="incomplete",design_id=design_id)).replace('"pass_"','"pass"'),encoding="utf-8")
+    gate_path.write_text(json.dumps({"pass":False,"status":"incomplete","design_id":design_id}),encoding="utf-8")
     tasks=[]
     for seed in seeds:
         for suite in SUITES:
