@@ -1,0 +1,27 @@
+\subsection{Peer communication and updating: separate stability diagnostic}
+\label{sec:results_gate0e}
+
+The peer-channel diagnostic contrasts an elite-only information set with live, muted, and stale peer channels under a corrected common period-0 audit. The new stability run comprises 100 matched seeds and a 400-period horizon; it does not pool with archived Experiments 1--2. Table~\ref{tab:gate0e_main} reports sender MSE, null MSE, and null-relative damage $D$. Adding live peers rather than using elite sources alone raises incremental damage under the original myopic sender (adaptive receivers: $+7.070$, paired bootstrap Monte Carlo interval $[5.753,8.586]$; frozen receivers: $+5.717$, $[5.001,6.461]$). The one-step credibility-aware sender instead yields $+0.595$ with adaptive receivers ($[0.399,0.796]$) and $-0.956$ with frozen receivers ($[-1.173,-0.740]$). This sender comparison jointly changes the objective and information set; it is not an isolated increase in strategic intelligence.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Gate 0E-2: elite-only versus live peers, $T=400$. Means over 100 matched seeds. $\Delta D$ denotes live-minus-elite incremental damage.}
+\label{tab:gate0e_main}
+\begin{tabular}{lllrrrr}
+\toprule
+Sender & Receiver & Network & $MSE_{s}$ & $MSE_{null}$ & $D$ & $\Delta D$ \\
+\midrule
+Myopic & Adaptive & Elite-only & 5.575 & 0.0001 & 5.575 & -- \\
+Myopic & Adaptive & Live peers & 12.646 & 0.0008 & 12.645 & +7.070 \\
+Myopic & Frozen & Elite-only & 9.111 & 0.0001 & 9.111 & -- \\
+Myopic & Frozen & Live peers & 14.828 & 0.0006 & 14.828 & +5.717 \\
+Credibility-aware & Adaptive & Elite-only & 6.189 & 0.0001 & 6.189 & -- \\
+Credibility-aware & Adaptive & Live peers & 6.785 & 0.0008 & 6.784 & +0.595 \\
+Credibility-aware & Frozen & Elite-only & 7.394 & 0.0001 & 7.394 & -- \\
+Credibility-aware & Frozen & Live peers & 6.438 & 0.0006 & 6.437 & -0.956 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With the same extended peer sources present, live-minus-stale incremental damage is $+4.687$ and $+6.672$ under the myopic sender with adaptive and frozen receivers, respectively, and $+0.424$ and $+0.073$ under credibility-aware sending. The last interval crosses zero. Muted peer requests deliberately waste attention and represent an extreme diagnostic rather than simple deletion of peer ties. Within the 100 stability seeds, the myopic live-minus-elite contrast shrinks between $T=200$ and $T=400$ (adaptive: 12.748 to 7.070; frozen: 10.978 to 5.717). The exact E/M/S/L contrast accounting does not identify independent causal mediation or the original provenance of peer messages.
