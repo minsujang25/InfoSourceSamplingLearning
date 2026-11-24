@@ -1,0 +1,31 @@
+# V6 final structural production — frozen 2026-11-24
+
+User approved transition to final production after theory continuity review. See V6_THEORY_CONTINUITY_AND_CLOSURE_2026-11-24.md and V6_STRATEGIC_SCOPE_FINDINGS_2026-11-24.md. This authorizes only the frozen H/G production below after a matching technical gate, not further design expansion.
+
+## Grid and seed choice
+
+New seed set 20001–20500 (500), preflight seed 19999, both T400. These ranges are disjoint from the documented prior Paper B ranges inspected (4001–4100, 5101–5108, 6001–6500, 6900-series, 7001–7600, 8001–8002). No assertion about every undocumented local or UCloud run. Choose once before outcomes. Same matched seeds within and across suites; no pooling with pilot, historical production, or robustness. H16 (2 H x 2 S x null/fixed_biased x adaptive/frozen) =8000, G8 (2 gateway composition x null/fixed_biased x adaptive/frozen) =4000. 12000 grid, 1000 representative logger parity (one per seed/suite) =13000 actual. No strategic H/G, C expansion or new sensitivity grid. All 500 seeds required, not stopping by direction/significance.
+
+Common specification exactly frozen V6 scientific archive 85faac503d4a: N100 T400 C20 epsilon .05 K1 interval5, source_posterior tau1, centroid/first_audit, delta_comparison, synchronous, same truth and initial states by design. H fixed 50/50 groups, two peers, same-group probability .5/.9, low/high S shift 0/+/-3, universal elites; G 10% fixed expert gateways, universal jammer, two peers, low/high non-gateway 1/2 expert-connected peers, fixed gateway peer maps, flat priors. Null t0 audit, then inactive and ranked last. No behavioral changes. Original scientific runner fingerprint 3e217225e6552887d611478c7b3e44457628aea152bbf275ffcbed8d28202e89 and upstream 754d7c373ff4b9f6eb24e1b0044917d559f69397531a053d5ab64d314cd67774 locked. Exact original scientific archive SHA and software required by existing robustness archive validator. New runner and analysis have separate fingerprint, existing files untouched.
+
+Sample size rationale: pilot 20-seed aligned adaptive H delta MSE MCSE .2215, G adaptive damage contrast .16085. Assuming similar seed variation at 500 seeds gives approximate .0443 and .0322 MCSE (95% normal half widths .0868 and .0631); not guarantees, no p-value stopping. Pilot-derived hypotheses are evaluated on fresh simulation seeds, not empirical preregistration.
+
+## Gate and measurements
+
+Preflight: seed19999 full T400 H16/G8 grid, 2 parity, plus two archived T400 representative replays (seed6001) =28 actual. Reuse unchanged scientific worker and validators, check full production consolidation and supplemental summaries. Exact original archive comparison of representative terminal beliefs/SD, group Q/W/MSE and integer request counts to tol 1e-12. No production before matching PASS. Preflight excluded from production. All production shards validated by scientific worker and read-time checks. Resume exact fingerprint/settings/environment only. No silent incomplete block omission. All original measurements retained, with no additional simulation:
+- Original seed contrasts and summary unchanged; add extended paired contrasts for full-horizon theta X/request shares, all I measures, adaptive-minus-frozen interaction, both directional joint-sign frequencies. Report G inverse divergence (direct dependence increases while MSE falls) at population and role levels. All H priors/groups and G roles retained. Distinguish D and absolute MSE; fixed vs null matched within seed/cell/receiver.
+- Group gap abs(mean_plus - mean_minus) at every saved H checkpoint, terminal high-low and HxS contrasts for each sender/receiver. Descriptive separation, not polarization.
+- Peer-only A topology per seed/suite/level (two levels, 2000 rows), edge convention ego->source, fixed outdegree2, indegree mean/population SD, directed reciprocity, undirected projection transitivity, same-group peer share and E-I=1-2*same. Exclude all elite/null slots, verify 200 distinct nonself edges and identical level graphs across sender/receiver/prior. G group labels not aligned prior groups. Supplement unless reveals artifact.
+- Whole-seed paired bootstrap 10000 draws RNG20261124, MCSE, sign frequencies. Interactions computed within seed. No causal mediation or provenance. Keep full group and individual time/terminal records; raw checkpoint edges in shards. Final compact shareable contains run/group terminal, group belief paths, core/extended contrasts, gap and topology; full ZIP contains all consolidated fields including group request and acquisition checkpoints, citizen-level outcomes, sender events. Keep both and raw shards. Full ZIP may be large (~25x pilot shareable size, rough estimate only); disk overhead includes shards and CSVs. No need to upload full ZIP first.
+
+## Local execution
+
+```bash
+conda activate paper-b
+python -m py_compile paper_b/experiments/run_v6_final_production.py paper_b/experiments/v6_final_production_analysis.py
+python -m unittest paper_b.test_v6_final_production paper_b.test_v6_scientific_measurement paper_b.test_v6_pilot_parity -v
+python -m paper_b.experiments.run_v6_final_production --phase preflight --workers 4 --output-dir "$HOME/Research/paperb_v6_results"
+python -m paper_b.experiments.run_v6_final_production --phase production --workers 8 --output-dir "$HOME/Research/paperb_v6_results"
+```
+
+Default baseline path output-dir/v6_scientific_85faac503d4a/paper_b_v6_scientific_85faac503d4a_shareable.zip; use --baseline-zip exact original path in both commands if moved. --dry-run checks archive and prints design without simulation. --resume only same phase/design/environment; worker count may change without changing design. Preflight gate preflight_only, grid_runs=24, parity_runs=2, archive_replay_pass=true, two replay rows, production_authorized=false. Final gate production_only, grid_runs=12000, parity_runs=1000, blocks=1000, full_horizon=400, production_authorized=true. Compact paper_b_v6_final_production_<id>_shareable.zip; full paper_b_v6_final_production_<id>_full.zip. Do not overwrite prior batches or delete raw shards. Actual local tests and full-horizon preflight required; no remote ABM run. Final production PASS is technical; report actual effect directions and uncertainty, not a condition of PASS.
