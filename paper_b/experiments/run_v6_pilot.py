@@ -46,6 +46,24 @@ def require(ok, msg):
         raise RuntimeError(msg)
 
 
+def parity_payload(value):
+    """Exact, deterministic comparison of diagnostic output, including NaN.
+
+    Undefined diagnostic values may be NaN on both trajectories. Preserve
+    their positions and distinguish them from null or finite values. Reject
+    infinities; keep strict canonical_hash unchanged for design fingerprints.
+    """
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=True)
+
+    def check_constant(token):
+        if token != "NaN":
+            raise ValueError(f"Infinite diagnostic value in logger parity: {token}")
+        return None
+
+    json.loads(payload, parse_constant=check_constant)
+    return payload
+
+
 def fingerprint():
     paths = ["paper_b/measurement.py", "paper_b/structural_designs.py",
              "paper_b/validation.py", "paper_b/experiments/run_v6_pilot.py",
@@ -282,9 +300,10 @@ def worker(seed, suite, horizon, design_id, root):
                     and o["run"]["sender_regime"]==representative[3]
                     and o["run"]["reliance_mode"]==representative[4])
     plain, _ = run_one(seed, suite, representative, horizon, design_id, instrument=False)
-    # Canonical serialization compares NaN sentinels consistently (NaN != NaN).
+    # Undefined diagnostic NaNs are allowed only in matching positions.
+    # Design fingerprints still use the strict upstream canonical_hash.
     for key in ("beliefs", "belief_checkpoints", "lambda_checkpoints", "jammer_strategy"):
-        require(canonical_hash(baseline[key]) == canonical_hash(plain[key]),
+        require(parity_payload(baseline[key]) == parity_payload(plain[key]),
                 f"Logger parity failed: {key}")
     path = Path(root)/"shards"/f"{suite}__{seed}.json.gz"
     tmp = path.with_suffix(".tmp")
