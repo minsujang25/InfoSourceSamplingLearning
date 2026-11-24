@@ -282,10 +282,10 @@ def worker(seed, suite, horizon, design_id, root):
                     and o["run"]["sender_regime"]==representative[3]
                     and o["run"]["reliance_mode"]==representative[4])
     plain, _ = run_one(seed, suite, representative, horizon, design_id, instrument=False)
-    require(baseline["beliefs"] == plain["beliefs"] and
-            baseline["belief_checkpoints"] == plain["belief_checkpoints"] and
-            baseline["lambda_checkpoints"] == plain["lambda_checkpoints"] and
-            baseline["jammer_strategy"] == plain["jammer_strategy"], "Logger parity failed")
+    # Canonical serialization compares NaN sentinels consistently (NaN != NaN).
+    for key in ("beliefs", "belief_checkpoints", "lambda_checkpoints", "jammer_strategy"):
+        require(canonical_hash(baseline[key]) == canonical_hash(plain[key]),
+                f"Logger parity failed: {key}")
     path = Path(root)/"shards"/f"{suite}__{seed}.json.gz"
     tmp = path.with_suffix(".tmp")
     with gzip.open(tmp, "wt", encoding="utf-8") as f:
