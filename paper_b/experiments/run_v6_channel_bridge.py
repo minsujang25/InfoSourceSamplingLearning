@@ -53,7 +53,7 @@ def validate(outputs,seed,horizon,did):
     expected={(c[0],c[3],c[4]) for c in cells()}
     actual={(o["run"]["cell"],o["run"]["sender_regime"],o["run"]["reliance_mode"]) for o in outputs}
     require(len(outputs)==16 and actual==expected,"Incomplete or duplicate C grid")
-    base.check_block(outputs,"C")
+    base.check_block(outputs,"bridge_generic")
     for o in outputs:
         r=o["run"]
         require(r["seed"]==seed and r["design_id"]==did and r["suite"]=="C","Wrong bridge run identity")
@@ -74,19 +74,13 @@ def validate(outputs,seed,horizon,did):
             require(x["total_requests"]==x["citizen_periods"]*base.CREDIT,"Request budget mismatch")
             if x["learning_target"]=="all":
                 require(x["citizen_periods"]==x["horizon_step"]*x["n_citizens"],"Request history incomplete")
-    # Existing C validator assumes four sender regimes. Its M/S/L comparison
-    # logic is reused via an explicit two-sender validation below instead.
+
 
 
 def validate_c(outputs,seed,horizon,did):
-    # base.check_block's C-specific count is hardcoded for four senders;
-    # run its generic matching checks, then verify exactly this 2-sender grid.
-    from unittest.mock import patch
-    original=base.check_block
-    def generic(rows,suite):
-        original(rows,"bridge_generic")
-    with patch.object(base,"check_block",generic):
-        validate(outputs,seed,horizon,did)
+    # The existing C-specific validator expects four senders; verify this
+    # two-sender grid explicitly after the generic matching checks.
+    validate(outputs,seed,horizon,did)
     extended=[o for o in outputs if o["run"]["cell"]!="elite_only"]
     require(len({o["run"]["structural_fingerprint"] for o in extended})==1,"M/S/L graph mismatch")
     sig=defaultdict(dict)
