@@ -143,6 +143,8 @@ def build_seed(seed,outputs):
         cats[v,s,m]=individual_rows(idx[v,s,"low",m],idx[v,s,"high",m])
         for g,vals in lev.items():
             d=difference(vals,low[g])
+            d["joint_H_type"]=int(d["Q_jammer"]<0 and d["mse"]>0)
+            d["joint_G_type"]=int(d["Q_jammer"]>0 and d["mse"]<0)
             deltas[v,s,m,g]=d
             emit("high_minus_low",v,s,m,g,d)
             emit("sign_category",v,s,m,g,cats[v,s,m][g])
@@ -161,31 +163,57 @@ def build_seed(seed,outputs):
     return rows
 
 def summarize(rows,seeds):
+    """Shared whole-seed bootstrap; batched count-matrix implementation.
+    Missing denominators are explicit; conditional category summaries also
+    report a pooled count-weighted estimate and pooled bootstrap interval."""
     keyfields=("kind","variant","suite","mode","group","metric")
-    series=defaultdict(dict)
+    n=len(seeds); seed_index={s:i for i,s in enumerate(seeds)}
+    series={}
     for r in rows:
         key=tuple(r[k] for k in keyfields)
-        require(r["seed"] not in series[key],"Duplicate seed statistic")
-        series[key][r["seed"]]=r["value"]
-    n=len(seeds); draws=np.random.default_rng(BOOT).integers(0,n,size=(10000,n))
-    result=[]
-    for key,values in sorted(series.items()):
-        x=np.array([values.get(s,np.nan) if values.get(s) is not None else np.nan for s in seeds],dtype=float)
-        valid=np.isfinite(x); count=int(valid.sum())
-        if count:
-            sims=x[draws]
-            den=np.isfinite(sims).sum(axis=1)
-            bs=np.divide(np.nansum(sims,axis=1),den,out=np.full(len(den),np.nan),where=den>0)
-            bs=bs[np.isfinite(bs)]
-            lo,hi=np.quantile(bs,[.025,.975])
-            result.append(dict(zip(keyfields,key),n_valid=count,n_expected=n,
-                mean=float(np.mean(x[valid])),lo=float(lo),hi=float(hi),
-                mcse=float(np.std(x[valid],ddof=1)/np.sqrt(count)) if count>1 else None,
-                positive=float(np.mean(x[valid]>0)),negative=float(np.mean(x[valid]<0)),
-                zero=float(np.mean(x[valid]==0))))
-        else:
-            result.append(dict(zip(keyfields,key),n_valid=0,n_expected=n,
-                               mean=None,lo=None,hi=None,mcse=None,positive=None,negative=None,zero=None))
+        if key not in series: series[key]=(np.full(n,np.nan),np.zeros(n,dtype=bool))
+        x,seen=series[key]; i=seed_index[r["seed"]]
+        require(not seen[i],"Duplicate seed statistic")
+        seen[i]=True
+        if r["value"] is not None: x[i]=float(r["value"])
+    draws=np.random.default_rng(BOOT).integers(0,n,size=(10000,n))
+    counts=np.zeros((10000,n),dtype=float)
+    np.add.at(counts,(np.arange(len(draws))[:,None],draws),1)
+    keys=sorted(series); result=[]
+    for start in range(0,len(keys),128):
+        ks=keys[start:start+128]
+        x=np.column_stack([series[k][0] for k in ks]); valid=np.isfinite(x)
+        z=np.where(valid,x,0.)
+        num=counts@z; den=counts@valid.astype(float)
+        bs=np.divide(num,den,out=np.full(num.shape,np.nan),where=den>0)
+        for j,k in enumerate(ks):
+            values=x[valid[:,j],j]; b=bs[np.isfinite(bs[:,j]),j]; count=len(values)
+            row=dict(zip(keyfields,k),n_valid=count,n_expected=n,
+                mean=float(values.mean()) if count else None,
+                lo=float(np.quantile(b,.025)) if len(b) else None,
+                hi=float(np.quantile(b,.975)) if len(b) else None,
+                mcse=float(np.std(values,ddof=1)/np.sqrt(count)) if count>1 else None,
+                positive=float(np.mean(values>0)) if count else None,
+                negative=float(np.mean(values<0)) if count else None,
+                zero=float(np.mean(values==0)) if count else None,
+                pooled_mean=None,pooled_lo=None,pooled_hi=None,pooled_denominator=None)
+            # Category conditional means pool citizens, not equal-weighted
+            # seed-specific conditional means. Preserve both estimands.
+            metric=k[-1]
+            if k[0]=="sign_category":
+                cat=next((c for c in CATEGORIES if metric.startswith(c+"_")),None)
+                suffix=metric[len(cat)+1:] if cat else ""
+                conditional=suffix.endswith("_per_citizen") or suffix.startswith(("low_","high_"))
+                if cat and conditional:
+                    weights=series[k[:-1]+(cat+"_count",)][0]
+                    w=np.where(valid[:,j]&np.isfinite(weights),weights,0.)
+                    y=z[:,j]*w
+                    bd=counts@w; bn=counts@y
+                    pooled=bn[bd>0]/bd[bd>0]
+                    if w.sum()>0:
+                        row.update(pooled_mean=float(y.sum()/w.sum()),pooled_denominator=float(w.sum()),
+                                   pooled_lo=float(np.quantile(pooled,.025)),pooled_hi=float(np.quantile(pooled,.975)))
+            result.append(row)
     return result
 
 def csv_gz(path,rows):
