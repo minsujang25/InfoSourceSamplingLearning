@@ -63,8 +63,8 @@ def load(paths,roots):
             require(man["software_versions"]==up.software_versions(),"Software mismatch "+tag)
             d=dict(man); d.pop("design_id")
             require(up.canonical_hash(d)[:12]==did,"Archive canonical identity "+tag)
-            require(man["upstream_fingerprint"]==up.code_fingerprint()==sci.EXPECTED_UPSTREAM,"Upstream fingerprint "+tag)
-            require(man["scientific_runner_fingerprint"]==sci.fingerprint(),"Scientific fingerprint "+tag)
+            require(man.get("upstream_fingerprint",man.get("model_fingerprint"))==up.code_fingerprint()==sci.EXPECTED_UPSTREAM,"Upstream fingerprint "+tag)
+            require(man.get("scientific_runner_fingerprint",man.get("scientific_fingerprint"))==sci.fingerprint(),"Scientific fingerprint "+tag)
             if tag=="production":
                 require(man["final_runner_fingerprint"]==final.fingerprint(),"Production fingerprint")
                 require(man["seeds"]==list(range(20001,20501)) and gate["grid_runs"]==12000,"Production sample")
