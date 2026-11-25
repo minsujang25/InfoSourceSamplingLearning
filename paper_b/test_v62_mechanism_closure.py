@@ -97,6 +97,33 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     r.verify_package(root/"shareable"/"test")
 
+    def test_replay_missingness(self):
+        source=dict(beliefs=[dict(terminal_mu_theta=1.)],
+                    group_terminal=[dict(mse_truth=1.)],
+                    group_belief_checkpoints=[dict(mse_truth=1.)],
+                    channel_citizens=[dict(Q_jammer=2.,I_corrective_crosscut_any=math.nan),
+                                      dict(Q_jammer=3.,I_corrective_crosscut_any=.5)])
+        normalized=r.replay_tables(source)
+        self.assertIsNone(normalized["channel_citizens"][0]["I_corrective_crosscut_any"])
+        self.assertEqual(normalized["channel_citizens"][1]["I_corrective_crosscut_any"],.5)
+        self.assertEqual(normalized["replay_missingness"],{"channel_citizens.I_corrective_crosscut_any":1})
+        self.assertTrue(math.isnan(source["channel_citizens"][0]["I_corrective_crosscut_any"]))
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/"replay.json.gz"
+            r.write_gz(path,normalized)
+            self.assertEqual(r.read_gz(path),normalized)
+        source["channel_citizens"][0]["Q_jammer"]=math.nan
+        with self.assertRaises(ValueError):
+            r.replay_tables(source)
+        source["channel_citizens"][0]["Q_jammer"]=2.
+        source["channel_citizens"][0]["I_corrective_crosscut_any"]=math.inf
+        with self.assertRaises(ValueError):
+            r.replay_tables(source)
+        source["channel_citizens"][0]["I_corrective_crosscut_any"]=math.nan
+        source["beliefs"][0]["terminal_mu_theta"]=math.nan
+        with self.assertRaises(ValueError):
+            r.replay_tables(source)
+
     def test_resume_requires_checksum(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); (root/"preflight").mkdir()
