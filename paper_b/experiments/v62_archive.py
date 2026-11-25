@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import zipfile
 import numpy as np
@@ -68,7 +69,7 @@ def load(paths,roots):
             if tag=="production":
                 require(man["final_runner_fingerprint"]==final.fingerprint(),"Production fingerprint")
                 require(man["seeds"]==list(range(20001,20501)) and gate["grid_runs"]==12000,"Production sample")
-            pred=lambda r: r.get("sender_regime")=="fixed_biased" and (r.get("suite")=="G" or r.get("prior")=="high")
+            pred=lambda r: r.get("sender_regime")=="fixed_biased" and (r.get("suite")=="G" or (r.get("prior")=="high" or r.get("cell","").endswith("_S_high")))
             seed=20001 if tag=="production" else 6001
             pred_old=lambda r: pred(r) and int(r["seed"])==seed
             tables={}
@@ -112,7 +113,7 @@ def compare_replay(out,tag,tables,variant):
     fields=("mse_truth","mean_belief","Q_jammer_channel","Q_expert_channel","W_jammer_channel",
             "W_peer_incoming_hhi","W_peer_incoming_top5_share")
     for k in fields:
-        require(close(float(old[k]),float(run[k])),"Replay "+tag+" "+rid+" "+k)
+        require(math.isclose(float(old[k]),float(run[k]),rel_tol=1e-12,abs_tol=1e-12),"Replay "+tag+" "+rid+" "+k)
     coverage={"runs":1}
     for table,keys,metrics in [
         ("group_terminal",("group_type","group"),("mse_truth","mean_belief","Q_jammer","Q_expert","W_jammer")),
@@ -127,8 +128,23 @@ def compare_replay(out,tag,tables,variant):
         require(set(ref)==set(actual),"Replay table keys "+table)
         for key,r in ref.items():
             for k in metrics:
-                require(close(float(r[k]),float(actual[key][k])),"Replay table mismatch "+table+" "+k)
+                require(math.isclose(float(r[k]),float(actual[key][k]),rel_tol=1e-12,abs_tol=1e-12),"Replay table mismatch "+table+" "+k)
         coverage[table]=len(ref)
+    if "capture" in tables:
+        rows=[r for r in tables["capture"] if matching(r)]
+        require(bool(rows),"Missing archived capture rows")
+        for r in rows:
+            kind,g=r["group_type"],r["group"]
+            xx=[x for x in out["terminal"] if kind=="all" or
+                (kind=="citizen_group" and str(x["group"])==g) or
+                (kind=="gateway_role" and x["role"]==g)]
+            require(len(xx)==int(r["n"]),"Capture sample mismatch")
+            mu=np.array([x["mu"] for x in xx])
+            vals=dict(mse=float(np.mean(mu**2)),jammer_side=float(np.mean(mu>2)),
+                      near_jammer=float(np.mean(abs(mu-4)<=.5)),near_truth=float(np.mean(abs(mu)<=.5)))
+            for k,v in vals.items():
+                require(math.isclose(float(r[k]),v,rel_tol=1e-12,abs_tol=1e-12),"Archived capture "+k)
+        coverage["capture"]=len(rows)
     return dict(tag=tag,variant=variant,run_id=rid,coverage=coverage,passed=True)
 
 def structural_benchmark(tables):
