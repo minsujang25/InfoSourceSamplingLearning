@@ -3,6 +3,7 @@ from collections import defaultdict
 import csv
 import gzip
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
@@ -82,6 +83,13 @@ def level_rows(o):
                 vals[prefix+"weighted_error"]=ratio(totals["Lnum"],totals["Q"])
                 vals[prefix+"snapshot_mean"]=ratio(totals["snapshot_B"],totals["snapshot_Q"])
                 vals[prefix+"snapshot_error"]=ratio(totals["snapshot_Lnum"],totals["snapshot_Q"])
+        for h in sorted({x["h"] for x in o["checkpoints"]}):
+            xx=[x for x in o["checkpoints"] if x["citizen_pos"] in ids and x["h"]==h]
+            require(len(xx)==n,"Group checkpoint coverage")
+            for k,fn in (("mean",lambda x:x["mu"]),("mse",lambda x:x["mu"]**2),
+                         ("sd",lambda x:x["sd"]),("precision",lambda x:1/x["sd"]**2),
+                         ("rank1",lambda x:x["rank"]==1),("jammer_side",lambda x:x["mu"]>2)):
+                vals[f"h{h}_{k}"]=sum(fn(x) for x in xx)/n
         result[label]=vals
     if o["suite"]=="H":
         result["all"]["group_gap"]=abs(result["group_1"]["mean"]-result["group_-1"]["mean"])
@@ -95,6 +103,10 @@ CATEGORIES=("zero","more_Q_higher_error","more_Q_lower_error","less_Q_higher_err
 
 def individual_rows(low,high):
     high_by={r["citizen_pos"]:r for r in high["terminal"]}
+    checkpoints={}
+    for lev,obj in (("low",low),("high",high)):
+        checkpoints[lev]={(x["citizen_pos"],x["h"]):x for x in obj["checkpoints"]}
+    hs=sorted({x["h"] for x in low["checkpoints"]})
     result={}
     for label,rr in groups(low["terminal"]):
         n=len(rr); by=defaultdict(list)
@@ -118,6 +130,13 @@ def individual_rows(low,high):
                              ("strict_sequence",lambda r:r["strict_sequence"]),("terminal_sd",lambda r:r["sd"]),
                              ("initial_rank34",lambda r:r["initial_rank"]>=3),("promotion",lambda r:r["promotion"] is not None)):
                     vals[p+lev+"_"+k]=ratio(sum(fn(x[i]) for x in xs),count)
+            if low["variant"]=="baseline" and low["suite"]=="H":
+                for lev,i in (("low",0),("high",1)):
+                    for h in hs:
+                        zz=[checkpoints[lev][(x[i]["citizen_pos"],h)] for x in xs]
+                        for k,fn in (("mu",lambda x:x["mu"]),("mse",lambda x:x["mu"]**2),
+                                     ("precision",lambda x:1/x["sd"]**2),("rank1",lambda x:x["rank"]==1)):
+                            vals[p+lev+f"_h{h}_{k}"]=ratio(sum(fn(x) for x in zz),count)
             vals[p+"zero_Q"]=sum(x[2]==0 for x in xs)
             vals[p+"zero_error"]=sum(x[3]==0 for x in xs)
         result[label]=vals
@@ -322,4 +341,7 @@ def verify_package(folder):
                 elif cov.get("format")=="json_rows":
                     obj=json.loads(gzip.decompress(data))
                     require(len(obj)==cov["rows"] and sorted({x["seed"] for x in obj if "seed" in x})==cov["seeds"],"Seed table coverage")
+                elif cov.get("format")=="csv":
+                    reader=csv.DictReader(io.StringIO(gzip.decompress(data).decode("utf-8")))
+                    require(reader.fieldnames==cov["columns"] and sum(1 for _ in reader)==cov["rows"],"CSV coverage")
     return len(seen)
