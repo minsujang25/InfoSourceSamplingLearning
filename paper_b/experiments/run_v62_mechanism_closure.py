@@ -10,6 +10,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import nullcontext
 import csv
+import fcntl
 import gzip
 import json
 import multiprocessing as mp
@@ -107,6 +108,16 @@ def saved(root,phase,seed,cell,horizon,did):
 
 def worker(root,phase,seed,cell,horizon,did):
     path,sha,hist=paths(root,phase,seed,cell)
+    # The checksum is the commit marker. A process killed between atomic
+    # file renames has not committed a scientific shard. Preserve the orphan
+    # and retry exactly the same job. A committed checksum mismatch is fatal.
+    if path.exists() and not sha.exists():
+        quarantine=path.parent/"interrupted"; quarantine.mkdir(exist_ok=True)
+        for f in (path,hist):
+            if f.exists():
+                dest=quarantine/(f.name+"."+str(os.getpid()))
+                require(not dest.exists(),"Existing interrupted artifact")
+                f.replace(dest)
     if saved(root,phase,seed,cell,horizon,did) is not None:
         return job_key(seed,cell)
     v,s,lev,mode=cell
@@ -213,9 +224,12 @@ def run_main(args):
     report.write_json(root/"ARCHIVE_INVENTORY.json",inventory)
     execution=dict(design_id=did,status="incomplete",preflight={},archive_replay=[],production_failed={})
     report.write_json(root/"EXECUTION_SUMMARY.json",execution)
-    subprocess.run([sys.executable,"-m","unittest","paper_b.test_v62_mechanism_closure","-v"],check=True,cwd=ROOT)
+    subprocess.run([sys.executable,"-m","unittest","paper_b.test_v62_mechanism_closure","paper_b.test_v61_assumption_robustness","-v"],check=True,cwd=ROOT)
     structural=archive.structural_benchmark(data["production"])
     report.csv_gz(root/"structural_benchmark.csv.gz",structural)
+    structural_seed,structural_stats=report.structural_summary(structural)
+    report.csv_gz(root/"structural_seed_contrasts.csv.gz",structural_seed)
+    report.csv_gz(root/"structural_summary.csv.gz",structural_stats)
     allowed=set(VARIANTS)
     with ProcessPoolExecutor(max_workers=args.workers,mp_context=mp.get_context("spawn")) as pool:
         for tag,jobs in archive_jobs(data):
@@ -248,7 +262,9 @@ def run_main(args):
                 failed_cells=[k for k in failed if "__"+v+"__" in k])
         report.write_json(root/"EXECUTION_SUMMARY.json",execution)
         if args.preflight_only:
-            print(json.dumps(execution,indent=2)); return
+            print(json.dumps(execution,indent=2))
+            require(allowed==set(VARIANTS),"Preflight incomplete")
+            return
         jobs=[(seed,c) for seed in SEEDS for c in cells() if c[0] in allowed]
         failures=run_jobs(pool,root,"production",jobs,400,did) if jobs else {}
         execution["production_failed"]=failures
@@ -280,11 +296,11 @@ def run_main(args):
     for start in range(0,len(summary),25000):
         p=root/f"contrast_summary_{start//25000+1:03d}.csv.gz"
         report.csv_gz(p,summary[start:start+25000]);summary_paths.append(p)
-    execution.update(status="complete",technical_gate_pass=True,parity_runs=parity,
+    execution.update(status="validated_scientific_grid",technical_gate_pass=True,parity_runs=parity,
                      history_runs=len(histories),scientific_runs=3400,summary_rows=len(summary))
     report.write_json(root/"EXECUTION_SUMMARY.json",execution)
     primary=[manifest,root/"ARCHIVE_INVENTORY.json",root/"EXECUTION_SUMMARY.json",
-             root/"structural_benchmark.csv.gz",*summary_paths,*seed_dir.glob("seed_*.json.gz")]
+             root/"structural_benchmark.csv.gz",root/"structural_seed_contrasts.csv.gz",root/"structural_summary.csv.gz",*summary_paths,*seed_dir.glob("seed_*.json.gz")]
     indices={folder:report.package(root,files,folder,did) for folder,files in
              (("primary",primary),("individual_detail",detail),("histories",histories))}
     report.write_json(root/"shareable"/"TRANSFER_INDEX.json",indices)
@@ -304,8 +320,14 @@ def main():
     if args.verify_package:
         print("Verified members:",report.verify_package(args.verify_package));return
     require(args.workers>=1,"workers must be positive")
-    if args.archive_root is None: args.archive_root=["~/Research/paperb_v6_results"]
-    run_main(args)
+    if args.archive_root is None:
+        args.archive_root=["~/Research/paperb_v6_results",str(ROOT/"production_results"),str(ROOT/"local_results")]
+    parent=Path(args.output_dir).expanduser().resolve()
+    parent.mkdir(parents=True,exist_ok=True)
+    # macOS/Linux advisory lock automatically releases on interruption.
+    with (parent/".v62.lock").open("a+") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        run_main(args)
 
 if __name__=="__main__":
     main()
