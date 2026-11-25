@@ -224,6 +224,47 @@ def csv_gz(path,rows):
         writer.writeheader(); writer.writerows(rows)
     tmp.replace(path)
 
+def structural_summary(rows):
+    by={(r["seed"],r["level"],r["mode"]):r for r in rows}
+    seeds=sorted({r["seed"] for r in rows})
+    out=[]
+    for seed in seeds:
+        for mode in ("adaptive","frozen"):
+            a=by[seed,"low",mode]; b=by[seed,"high",mode]
+            for metric in ("U_hhi","U_top5","W_hhi","W_top5","excess_hhi","excess_top5",
+                           "indegree_sd","transitivity","gateway_opportunities"):
+                for kind,value in (("level_low",a[metric]),("level_high",b[metric]),
+                                   ("high_minus_low",b[metric]-a[metric])):
+                    out.append(dict(seed=seed,kind=kind,variant="production_structural",
+                        suite="G",mode=mode,group="all",metric=metric,value=value))
+    return out,summarize(out,seeds)
+
+def member_coverage(path):
+    """Record row coverage for all logical table members."""
+    name=path.name
+    if name.endswith(".json.gz"):
+        obj=read_gz(path)
+        if isinstance(obj,list):
+            seeds=sorted({x["seed"] for x in obj if "seed" in x})
+            return dict(seeds=seeds,rows=len(obj),format="json_rows")
+        if isinstance(obj,dict) and "terminal" in obj:
+            return dict(seeds=[obj["seed"]],variant=obj["variant"],suite=obj["suite"],
+                        level=obj["level"],mode=obj["mode"],
+                        rows={k:len(obj[k]) for k in ("terminal","windows","initial_audit","checkpoints")},
+                        format="run_tables")
+    if name.endswith(".csv.gz"):
+        with gzip.open(path,"rt",encoding="utf-8",newline="") as f:
+            reader=csv.DictReader(f)
+            n=0; seeds=set()
+            for row in reader:
+                n+=1
+                if row.get("seed"): seeds.add(int(row["seed"]))
+            if ".history." in name:
+                seeds.add(int(name.split("__")[0]))
+                require(n==40000,"Incomplete history "+name)
+            return dict(seeds=sorted(seeds),rows=n,columns=reader.fieldnames,format="csv")
+    return dict(format="metadata")
+
 def package(root,files,folder,design_id):
     """Independent, size-checked ZIPs with SHA-256 member manifests.
     Each member is a complete seed/run table or file, never a byte fragment."""
@@ -233,10 +274,10 @@ def package(root,files,folder,design_id):
         rel=str(f.relative_to(root))
         size=f.stat().st_size
         require(size<LIMIT-512*1024,"Oversize logical member: "+rel)
-        meta.append(dict(path=rel,bytes=size,sha256=digest(f)))
+        meta.append(dict(path=rel,bytes=size,sha256=digest(f),coverage=member_coverage(f)))
     batches=[]; batch=[]; size=0
     for r in meta:
-        estimated=r["bytes"]+512+2*len(r["path"])
+        estimated=r["bytes"]+1024+2*len(r["path"])+len(json.dumps(r["coverage"]))
         if batch and size+estimated>LIMIT-512*1024:
             batches.append(batch); batch=[]; size=0
         batch.append(r); size+=estimated
@@ -273,4 +314,12 @@ def verify_package(folder):
                 seen.add(r["path"])
                 data=z.read(r["path"])
                 require(len(data)==r["bytes"] and hashlib.sha256(data).hexdigest()==r["sha256"],"Member integrity")
+                cov=r.get("coverage",{})
+                if cov.get("format")=="run_tables":
+                    obj=json.loads(gzip.decompress(data))
+                    require(obj["seed"]==cov["seeds"][0] and all(len(obj[k])==n for k,n in cov["rows"].items()),"Run table coverage")
+                    require(len({x["citizen_pos"] for x in obj["terminal"]})==100,"Terminal citizen keys")
+                elif cov.get("format")=="json_rows":
+                    obj=json.loads(gzip.decompress(data))
+                    require(len(obj)==cov["rows"] and sorted({x["seed"] for x in obj if "seed" in x})==cov["seeds"],"Seed table coverage")
     return len(seen)
