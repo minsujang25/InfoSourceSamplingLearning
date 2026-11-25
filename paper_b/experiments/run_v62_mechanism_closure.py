@@ -92,6 +92,10 @@ def validate_saved(obj,phase,seed,cell,horizon,did):
     require(obj["parity_pass"] is True if parity_required(phase,seed,cell) else obj["parity_pass"] is None,"Parity provenance")
     for r in obj["terminal"]:
         require(close(sum(r["signed"].values()),r["mu"]) and close(sum(r["signed_mse"].values()),r["mu"]**2),"Stored accounting")
+    if replay_variant(phase):
+        count=sum(x["I_corrective_crosscut_any"] is None for x in obj["channel_citizens"])
+        require(obj["replay_missingness"]=={"channel_citizens.I_corrective_crosscut_any":count},
+                "Replay missingness accounting")
     require(obj["run"]["seed"]==seed,"Native seed")
     return obj
 
@@ -143,8 +147,7 @@ def worker(root,phase,seed,cell,horizon,did):
              run={k:out["run"][k] for k in RUN_FIELDS},parity_pass=parity,history_sha256=hsha,**obs)
     # Keep replay tables only for technical archive comparisons.
     if replay_variant(phase):
-        for k in ("beliefs","channel_citizens","group_terminal","group_belief_checkpoints"):
-            obj[k]=out[k]
+        obj.update(report.replay_tables(out))
     validate_saved(obj,phase,seed,cell,horizon,did)
     report.write_gz(path,obj)
     tmp=sha.with_suffix(".tmp"); tmp.write_text(archive.digest(path)+"\n"); tmp.replace(sha)
