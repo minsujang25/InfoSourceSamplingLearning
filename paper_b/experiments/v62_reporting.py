@@ -21,6 +21,31 @@ def write_json(path,obj):
     tmp.write_text(json.dumps(obj,indent=2,allow_nan=False))
     tmp.replace(path)
 
+def replay_tables(out):
+    """Normalize only the documented undefined legacy placeholder.
+
+    measurement.evidence_channel_decomposition_rows deliberately emits
+    math.nan for I_corrective_crosscut_any. It is not a measured outcome.
+    Preserve its missingness as JSON null and count conversions. All other
+    non-finite values remain fatal, including infinities in this field.
+    """
+    tables={k:out[k] for k in ("beliefs","group_terminal","group_belief_checkpoints")}
+    rows=[]
+    count=0
+    for original in out["channel_citizens"]:
+        row=dict(original)
+        value=row["I_corrective_crosscut_any"]
+        if isinstance(value,(float,np.floating)) and math.isnan(value):
+            row["I_corrective_crosscut_any"]=None
+            count+=1
+        rows.append(row)
+    tables["channel_citizens"]=rows
+    tables["replay_missingness"]={"channel_citizens.I_corrective_crosscut_any":count}
+    # Strict recursive serialization: never replace an unexpected non-finite
+    # scientific value or silently relax the JSON format.
+    json.dumps(tables,allow_nan=False)
+    return tables
+
 def write_gz(path,obj):
     tmp=path.with_name(path.name+".tmp")
     with gzip.open(tmp,"wt",encoding="utf-8") as f:
